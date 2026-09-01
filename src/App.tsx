@@ -155,6 +155,7 @@ const VoiceSession = ({
   });
   const [errors, setErrors] = useState<PipelineError[]>([]);
   const [slowWarning, setSlowWarning] = useState<boolean>(false);
+  const [micMuted, setMicMuted] = useState<boolean>(false);
 
   // Slow response / backpressure timer guard
   useEffect(() => {
@@ -343,6 +344,17 @@ const VoiceSession = ({
     setErrors((prev) => prev.filter((e) => e.id !== id));
   };
 
+  const toggleMic = async () => {
+    try {
+      const newMuted = !micMuted;
+      await localParticipant.setMicrophoneEnabled(!newMuted);
+      setMicMuted(newMuted);
+      log('MIC', newMuted ? '🔇 Microphone STOPPED (muted by user)' : '🎙️ Microphone STARTED (unmuted by user)');
+    } catch (err) {
+      log('MIC', `❌ Failed to toggle microphone: ${err}`);
+    }
+  };
+
   return (
     <div className="voice-session-layout">
       {/* LEFT PANEL: Visualizer, Latency Telemetry, Health, Controls */}
@@ -428,6 +440,19 @@ const VoiceSession = ({
         {/* Audio Renderer */}
         <RoomAudioRenderer />
 
+        {/* Explicit Start/Stop Microphone Button (Assessment §2A) */}
+        <button
+          onClick={toggleMic}
+          className={`mic-toggle-btn ${micMuted ? 'mic-off' : 'mic-on'}`}
+          title={micMuted ? 'Start Microphone' : 'Stop Microphone'}
+        >
+          {micMuted ? <MicOff size={20} /> : <Mic size={20} />}
+          <span>{micMuted ? 'Start Microphone' : 'Stop Microphone'}</span>
+        </button>
+        <span className={`mic-status-label ${micMuted ? 'status-muted' : 'status-active'}`}>
+          {micMuted ? '🔇 Mic Stopped' : '🎙️ Mic Streaming'}
+        </span>
+
         {/* Action Buttons & Controls */}
         <div className="left-actions-row">
           <button onClick={onOpenArchitecture} className="btn-secondary-sm" title="View System Architecture">
@@ -508,7 +533,7 @@ const VoiceSession = ({
                   <div className={`chat-icon ${isAgent ? 'icon-agent' : 'icon-user'}`}>
                     {isAgent ? <Bot size={14} /> : <User2 size={14} />}
                   </div>
-                  <div className={`chat-bubble ${isAgent ? 'bubble-agent' : 'bubble-user'}`}>
+                  <div className={`chat-bubble ${isAgent ? 'agent-bubble' : 'user-bubble'}`}>
                     <div className="bubble-header-row">
                       <span className="bubble-sender">
                         {isAgent ? agentName : 'You'} <span className="turn-tag">Turn #{t.turnNumber}</span>
@@ -539,7 +564,7 @@ const VoiceSession = ({
                 <div className="chat-icon icon-user pulse-anim">
                   <User2 size={14} />
                 </div>
-                <div className="chat-bubble bubble-user bubble-interim">
+                <div className="chat-bubble user-bubble bubble-interim">
                   <div className="bubble-header-row">
                     <span className="bubble-sender">You <span className="live-tag">Speaking...</span></span>
                   </div>
