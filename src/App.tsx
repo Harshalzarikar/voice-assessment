@@ -1091,6 +1091,7 @@ const App = () => {
                   />
                 )}
               </LiveKitRoom>
+              </motion.div>
             </motion.div>
           </motion.div>
         )}
