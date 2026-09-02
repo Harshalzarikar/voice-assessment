@@ -959,6 +959,8 @@ const App = () => {
   };
 
   const startTalk = async (agent: Agent) => {
+    setIsDisconnected(false);
+    setErrors([]);
     setLoading(true);
     try {
       // eslint-disable-next-line react-hooks/purity
@@ -979,6 +981,8 @@ const App = () => {
   const handleDisconnect = () => {
     setConnectionDetails(null);
     setActiveAgent(null);
+    setIsDisconnected(false);
+    setErrors([]);
   };
 
   return (
@@ -1157,7 +1161,10 @@ const App = () => {
                     <h2>Connection Lost</h2>
                     <p>The WebRTC connection to the server was unexpectedly dropped.</p>
                     <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
-                      <button onClick={() => { setIsDisconnected(false); setErrors([]); setRoomKey(prev => prev + 1); }} className="btn-primary"><RefreshCw size={16} /> Try Reconnect</button>
+                      <button onClick={() => { if (activeAgent) startTalk(activeAgent); }} className="btn-primary" disabled={loading}>
+                        {loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} 
+                        Try Reconnect
+                      </button>
                       <button onClick={handleDisconnect} className="btn-secondary">Close Session</button>
                     </div>
                   </div>
