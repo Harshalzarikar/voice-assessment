@@ -616,6 +616,9 @@ async def entrypoint(ctx: JobContext):
                 stt_latency_ms = (curr_time - user_stop) * 1000
                 if stt_latency_ms < 0:
                     stt_latency_ms = 0.0
+                elif stt_latency_ms > 3000:
+                    # VAD state leakage (VAD missed the speech, STT caught it).
+                    stt_latency_ms = 0.0
                 turn_metrics["stt_latency_ms"] = round(stt_latency_ms, 1)
             else:
                 # STT beat the VAD! The text is already waiting when VAD stops.
