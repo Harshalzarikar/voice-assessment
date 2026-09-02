@@ -316,7 +316,8 @@ async def entrypoint(ctx: JobContext):
             try:
                 chunk = await asyncio.wait_for(get_next_chunk(), timeout=2.5)
                 if "ttfb" not in turn_metrics:
-                    turn_metrics["ttfb"] = time.perf_counter()
+                    if hasattr(chunk, 'frame') and chunk.frame and len(chunk.frame.data) > 0:
+                        turn_metrics["ttfb"] = time.perf_counter()
                 return chunk
             except asyncio.TimeoutError:
                 logger.warning("[TTS] ⚠️ TTS generation timed out! Applying backpressure and fallback.")
