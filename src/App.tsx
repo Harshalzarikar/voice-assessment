@@ -186,9 +186,21 @@ const VoiceSession = ({
       if (state === 'listening' && prevStateRef.current === 'speaking') {
         log('GHOST_GUARD', '🛡️ User barge-in detected. Suppressing stale audio playback.');
       }
+      
+      // Point 6: Browser first-playback acknowledgement
+      if (state === 'speaking' && prevStateRef.current === 'thinking') {
+        if (room && room.localParticipant) {
+          const payload = new TextEncoder().encode(JSON.stringify({
+            type: "playback_ack",
+            timestamp: Date.now()
+          }));
+          room.localParticipant.publishData(payload, { reliable: true }).catch((err: any) => log('ROOM', 'Failed to send playback_ack: ' + err));
+        }
+      }
+      
       prevStateRef.current = state;
     }
-  }, [state]);
+  }, [state, room]);
 
   // ── LiveKit Data Channel Listener (Deduplication, Latency, & Ghost Audio Filtering) ──
   useEffect(() => {
@@ -215,6 +227,7 @@ const VoiceSession = ({
           setCancelledGenerations((prev) => new Set(prev).add(cancelled_generation_id));
           setActiveGenerationId(new_generation_id);
           setInterimUserText('');
+          setInterimAgentText(''); // Point 4: Immediately clear agent progressive text
         }
 
         // 2. Interim STT Transcript
@@ -818,6 +831,7 @@ const App = () => {
   // App-level error state so it survives component unmounts and can handle root LiveKitRoom errors
   const [errors, setErrors] = useState<PipelineError[]>([]);
   const [isDisconnected, setIsDisconnected] = useState(false);
+  const [roomKey, setRoomKey] = useState(0); // Point 10: Real reconnect logic
 
   const dismissError = (id: string) => {
     setErrors((prev) => prev.filter((e) => e.id !== id));
@@ -1034,7 +1048,9 @@ const App = () => {
               </div>
 
               {/* LiveKit Room */}
+              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass-panel" style={{ flex: 1, overflow: 'hidden' }}>
               <LiveKitRoom
+                key={roomKey}
                 token={connectionDetails.token}
                 serverUrl={connectionDetails.url}
                 connect={true}
@@ -1061,7 +1077,7 @@ const App = () => {
                     <h2>Connection Lost</h2>
                     <p>The WebRTC connection to the server was unexpectedly dropped.</p>
                     <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
-                      <button onClick={() => { setIsDisconnected(false); setErrors([]); }} className="btn-primary"><RefreshCw size={16} /> Try Reconnect</button>
+                      <button onClick={() => { setIsDisconnected(false); setErrors([]); setRoomKey(prev => prev + 1); }} className="btn-primary"><RefreshCw size={16} /> Try Reconnect</button>
                       <button onClick={handleDisconnect} className="btn-secondary">Close Session</button>
                     </div>
                   </div>

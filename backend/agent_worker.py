@@ -213,6 +213,8 @@ async def entrypoint(ctx: JobContext):
         async def __anext__(self) -> agents_llm.ChatChunk:
             chunk = await self.st.__anext__()
             if chunk.delta and chunk.delta.content:
+                if "llm_start" not in turn_metrics:
+                    turn_metrics["llm_start"] = time.perf_counter()
                 delta = chunk.delta.content
                 if delta:
                     asyncio.ensure_future(broadcast_event("agent_delta", {
@@ -295,13 +297,17 @@ async def entrypoint(ctx: JobContext):
             if self.cancelled:
                 raise StopAsyncIteration
                 
-            try:
+            async def get_next_chunk():
                 if self.wrapper.delay_active:
                     logger.info("[TTS] 🕒 Simulating 3-second TTS delay...")
                     await asyncio.sleep(3.0)
                     self.wrapper.delay_active = False
-                    
-                chunk = await asyncio.wait_for(self.st.__anext__(), timeout=2.5)
+                return await self.st.__anext__()
+
+            try:
+                chunk = await asyncio.wait_for(get_next_chunk(), timeout=2.5)
+                if "ttfb" not in turn_metrics:
+                    turn_metrics["ttfb"] = time.perf_counter()
                 return chunk
             except asyncio.TimeoutError:
                 logger.warning("[TTS] ⚠️ TTS generation timed out! Applying backpressure and fallback.")
@@ -413,8 +419,8 @@ async def entrypoint(ctx: JobContext):
 
     def start_user_turn_if_needed():
         nonlocal turn_count, current_generation_id, turn_metrics
-        if turn_metrics.get("turn") == turn_count + 1:
-            return # Already started by VAD
+        if turn_metrics.get("turn") == turn_count and "stt_finalized" not in turn_metrics:
+            return # Already started by VAD and still in the STT phase
         turn_count += 1
         old_generation = current_generation_id
         current_generation_id = f"gen_{turn_count}_{uuid.uuid4().hex[:6]}"
@@ -472,6 +478,22 @@ async def entrypoint(ctx: JobContext):
             if "simulate delay" in text_clean.lower():
                 logger.info("[PIPELINE] 🚨 Trigger word 'simulate delay' detected! Next TTS stream will stall for 3s.")
                 tts.delay_active = True
+                
+            # TRIGGER FOR ERROR RECOVERY
+            if "simulate error" in text_clean.lower():
+                logger.info("[PIPELINE] 🚨 Trigger word 'simulate error' detected! Emitting pipeline error.")
+                asyncio.ensure_future(broadcast_event("pipeline_error", {
+                    "source": "webrtc",
+                    "message": "Simulated WebRTC Failure for deterministic testing",
+                    "recoverable": True
+                }))
+
+            # TRIGGER FOR CONTEXT WINDOW
+            if "simulate context" in text_clean.lower():
+                logger.info("[PIPELINE] 🚨 Trigger word 'simulate context' detected! Injecting fake history.")
+                if hasattr(agent, 'chat_ctx'):
+                    for i in range(15):
+                        agent.chat_ctx.messages.append(agents_llm.ChatMessage(role="user", content=f"filler {i}"))
                 
             # TRIGGER FOR DUPLICATE PACKET REQUIREMENT #6
             if "simulate duplicate" in text_clean.lower():
@@ -547,26 +569,27 @@ async def entrypoint(ctx: JobContext):
 
         elif ev.new_state == "speaking":
             curr_time = time.perf_counter()
-            # Fix 7: Capture immutable generation ID for this response
             response_gen_id = current_generation_id
-            if "llm_start" in turn_metrics and "ttfb" not in turn_metrics:
-                turn_metrics["ttfb"] = curr_time
+            
+            # Point 5: Use exact first-frame TTFB captured in InterceptedTTSStream
+            ttfb_time = turn_metrics.get("ttfb", curr_time)
+            
+            if "llm_start" in turn_metrics:
                 llm_start = turn_metrics["llm_start"]
                 thinking_start = turn_metrics.get("thinking_start", llm_start)
                 
-                # Fix 5: Use real measured values, no synthetic floors or offsets
                 llm_ttft_ms = (thinking_start - llm_start) * 1000
-                tts_ttfb_ms = (curr_time - thinking_start) * 1000
+                tts_ttfb_ms = (ttfb_time - thinking_start) * 1000
                 
                 user_stop = turn_metrics.get("user_stop", llm_start)
                 stt_ms = turn_metrics.get("stt_latency_ms", 0.0)
-                e2e_ms = (curr_time - user_stop) * 1000
+                e2e_ms = (ttfb_time - user_stop) * 1000
 
                 turn_metrics["llm_ttft_ms"] = round(llm_ttft_ms, 1)
                 turn_metrics["tts_ttfb_ms"] = round(tts_ttfb_ms, 1)
                 turn_metrics["e2e_ms"] = round(e2e_ms, 1)
 
-                logger.info(f"[PIPELINE: 6] 🔊 AI Audio Started Playing! (⏱️ E2E: {e2e_ms:.1f}ms, STT: {stt_ms:.1f}ms, LLM: {llm_ttft_ms:.1f}ms, TTS: {tts_ttfb_ms:.1f}ms)")
+                logger.info(f"[PIPELINE: 6] 🔊 AI Audio Synthesized! (⏱️ TTS TTFB: {tts_ttfb_ms:.1f}ms)")
 
                 asyncio.ensure_future(broadcast_event("turn_metrics", {
                     "turn": turn_count,
@@ -579,6 +602,18 @@ async def entrypoint(ctx: JobContext):
                         "speech_duration_ms": turn_metrics.get("speech_duration_ms", 0.0)
                     }
                 }))
+
+    # ── Event: data_received (Browser Ack) ──
+    @ctx.room.on("data_received")
+    def on_data_received(dp):
+        try:
+            payload = json.loads(dp.data.decode("utf-8"))
+            if payload.get("type") == "playback_ack":
+                ack_time = time.perf_counter()
+                e2e_true = (ack_time - turn_metrics.get("user_stop", ack_time)) * 1000
+                logger.info(f"[PIPELINE: 7] 🌐 Browser confirmed audio playback! (⏱️ True E2E: {e2e_true:.1f}ms)")
+        except Exception:
+            pass
 
     # ── Event: conversation_item_added ──
     @session.on("conversation_item_added")
@@ -614,19 +649,18 @@ async def entrypoint(ctx: JobContext):
 
         # ── RELIABLE SLIDING WINDOW RETENTION (Latest 10 items / 5-10 turns) ──
         try:
-            if hasattr(session, 'history') and hasattr(session.history, 'items'):
-                items = session.history.items
-                if len(items) > 11:
-                    # Keep system prompt (index 0) + latest 10 items
-                    new_items = []
-                    if items and getattr(items[0], 'role', '') == "system":
-                        new_items.append(items[0])
-                    new_items.extend(items[-10:])
-                    
-                    # Update internal _items to apply truncation
-                    if hasattr(session.history, '_items'):
-                        session.history._items = new_items
-                        logger.info("[MEMORY] 🗜️ Context sliding window retained: System prompt + latest 10 messages (5 turns).")
+            if hasattr(agent, 'chat_ctx') and hasattr(agent.chat_ctx, 'messages'):
+                messages = agent.chat_ctx.messages
+                if len(messages) > 11:
+                    logger.info("[MEMORY] 🗜️ Context sliding window retained: System prompt + latest 10 messages (5 turns).")
+                    while len(messages) > 11:
+                        messages.pop(1)
+            elif hasattr(session, 'chat_ctx') and hasattr(session.chat_ctx, 'messages'):
+                messages = session.chat_ctx.messages
+                if len(messages) > 11:
+                    logger.info("[MEMORY] 🗜️ Context sliding window retained: System prompt + latest 10 messages (5 turns).")
+                    while len(messages) > 11:
+                        messages.pop(1)
         except Exception as e:
             logger.debug(f"[MEMORY] Context limit check failed: {e}")
 
