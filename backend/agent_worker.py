@@ -662,6 +662,9 @@ async def entrypoint(ctx: JobContext):
         logger.info(f"[AGENT] State: {ev.old_state} → {ev.new_state}")
 
         if ev.new_state == "thinking":
+            # Clear old progressive timestamps in case this is a secondary generation in the same turn
+            turn_metrics.pop("llm_start", None)
+            turn_metrics.pop("ttfb", None)
             turn_metrics["thinking_start"] = time.perf_counter()
             asyncio.ensure_future(broadcast_event("pipeline_status", {
                 "state": "thinking",
