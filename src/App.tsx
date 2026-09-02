@@ -350,6 +350,34 @@ const VoiceSession = ({
           });
         }
 
+        // 4b. Update the latest turn with the true E2E from the playback_ack
+        else if (type === 'playback_ack_metrics') {
+          setTurns((prevTurns) => {
+            const updated = [...prevTurns];
+            for (let i = updated.length - 1; i >= 0; i--) {
+              if (updated[i].generationId === data.generation_id && updated[i].metrics) {
+                updated[i] = {
+                  ...updated[i],
+                  metrics: {
+                    ...updated[i].metrics!,
+                    browser_first_playback: data.browser_first_playback,
+                    e2e_ms: data.e2e_ms
+                  }
+                };
+                break;
+              }
+            }
+            return updated;
+          });
+          
+          setLatestMetrics((prev) => {
+             if (prev) {
+                return { ...prev, browser_first_playback: data.browser_first_playback, e2e_ms: data.e2e_ms };
+             }
+             return prev;
+          });
+        }
+
         // 5. Pipeline Health Heartbeat
         else if (type === 'pipeline_health') {
           setPipelineHealth((prev) => ({ ...prev, ...data }));

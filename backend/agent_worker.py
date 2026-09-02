@@ -613,12 +613,15 @@ async def entrypoint(ctx: JobContext):
                 llm_start = turn_metrics["llm_start"]
                 thinking_start = turn_metrics.get("thinking_start", llm_start)
                 
-                llm_ttft_ms = (thinking_start - llm_start) * 1000
-                tts_ttfb_ms = (ttfb_time - thinking_start) * 1000
+                # Reviewer Fix: llm_ttft_ms is from thinking_start to llm_first_delta
+                llm_ttft_ms = (llm_start - thinking_start) * 1000
+                # Reviewer Fix: tts_ttfb_ms is from llm_first_delta to first_audio_frame
+                tts_ttfb_ms = (ttfb_time - llm_start) * 1000
                 
                 user_stop = turn_metrics.get("user_stop", llm_start)
                 stt_ms = turn_metrics.get("stt_latency_ms", 0.0)
-                e2e_ms = (ttfb_time - user_stop) * 1000
+                # E2E ms will be accurately populated by the frontend ack event
+                e2e_ms = -1
 
                 turn_metrics["llm_ttft_ms"] = round(llm_ttft_ms, 1)
                 turn_metrics["tts_ttfb_ms"] = round(tts_ttfb_ms, 1)
@@ -663,6 +666,12 @@ async def entrypoint(ctx: JobContext):
                 ack_time = time.perf_counter()
                 e2e_true = (ack_time - turn_metrics.get("user_stop", ack_time)) * 1000
                 logger.info(f"[PIPELINE: 7] 🌐 Browser confirmed audio playback! (⏱️ True E2E: {e2e_true:.1f}ms)")
+                
+                asyncio.ensure_future(broadcast_event("playback_ack_metrics", {
+                    "generation_id": current_generation_id,
+                    "browser_first_playback": ack_time,
+                    "e2e_ms": round(e2e_true, 1)
+                }))
         except Exception:
             pass
 
