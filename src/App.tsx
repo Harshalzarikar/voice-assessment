@@ -194,7 +194,7 @@ const VoiceSession = ({
             type: "playback_ack",
             timestamp: Date.now()
           }));
-          room.localParticipant.publishData(payload, { reliable: true }).catch((err: any) => log('ROOM', 'Failed to send playback_ack: ' + err));
+          room.localParticipant.publishData(payload, { reliable: true }).catch(() => log('ROOM', 'Failed to send playback_ack'));
         }
       }
       
