@@ -482,6 +482,29 @@ async def entrypoint(ctx: JobContext):
                 logger.info("[PIPELINE] 🚨 Trigger word 'simulate delay' detected! Next TTS stream will stall for 3s.")
                 tts.delay_active = True
                 
+            # TRIGGER FOR TURN BOOKKEEPING REQUIREMENT #1
+            if "simulate utterance" in text_clean.lower():
+                logger.info("[PIPELINE] 🚨 Trigger word 'simulate utterance' detected! Firing simulated interims...")
+                async def run_turn_test():
+                    class FakeEv:
+                        def __init__(self, t, f):
+                            self.transcript = t
+                            self.is_final = f
+                    
+                    # Wait for current turn to fully settle so we don't bleed states
+                    await asyncio.sleep(2.0)
+                    logger.info("[TEST] 🧪 Simulating 3 interims and 1 final transcript...")
+                    
+                    # Fire 3 fake interims
+                    for i in range(3):
+                        on_user_input_transcribed(FakeEv(f"interim {i}", False))
+                        await asyncio.sleep(0.2)
+                        
+                    # Fire 1 fake final
+                    on_user_input_transcribed(FakeEv("test utterance final", True))
+                    
+                asyncio.ensure_future(run_turn_test())
+                
             # TRIGGER FOR ERROR RECOVERY
             if "simulate error" in text_clean.lower():
                 logger.info("[PIPELINE] 🚨 Trigger word 'simulate error' detected! Emitting pipeline error.")
