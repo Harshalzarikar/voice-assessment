@@ -410,6 +410,41 @@ async def entrypoint(ctx: JobContext):
     await session.start(agent, room=ctx.room)
     logger.info("[SESSION] ✅ AgentSession started with telemetry & ghost-audio prevention.\n")
 
+    # ── EVENT: Session Error & Close (Point 9) ──
+    @session.on("error")
+    def on_session_error(e: Exception):
+        nonlocal current_generation_id, turn_count
+        logger.error(f"[SESSION] ❌ Session Error: {e}")
+        
+        # Map failure
+        err_str = str(e).lower()
+        source = "unknown"
+        if "stt" in err_str or "transcribe" in err_str: source = "stt"
+        elif "llm" in err_str or "groq" in err_str or "generate" in err_str or "chat" in err_str: source = "llm"
+        elif "tts" in err_str or "synthesize" in err_str or "audio" in err_str: source = "tts"
+            
+        # Cancel affected generation
+        cancelledGenerations_set.add(current_generation_id)
+        asyncio.ensure_future(broadcast_event("generation_cancelled", {
+            "cancelled_generation_id": current_generation_id,
+            "new_generation_id": current_generation_id, # Frontend will handle this gracefully
+            "turn": turn_count,
+            "reason": "provider_error"
+        }))
+
+        # Update health
+        asyncio.ensure_future(broadcast_event("pipeline_health", {
+            source: "error",
+            "generation_id": current_generation_id
+        }))
+        
+        # Publish structured event
+        asyncio.ensure_future(broadcast_event("pipeline_error", {
+            "source": source,
+            "message": f"Provider error: {str(e)}",
+            "recoverable": True
+        }))
+
     # ── PIPELINE STATE & TELEMETRY TRACKING ──
     turn_count = 0
     current_generation_id = f"gen_0_{uuid.uuid4().hex[:6]}"
