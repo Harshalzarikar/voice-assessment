@@ -14,7 +14,39 @@ This project is a high-performance, real-time voice AI assistant built for ultra
 - **Robust Error Recovery:** Explicit UI state handling for Microphone permission denials, WebSocket disconnects, and API failures.
 
 ## Architecture & Technology
-Please see [`ARCHITECTURE.md`](./ARCHITECTURE.md) for a detailed architecture diagram, pipeline latency waterfalls, and an explanation of the technology choices (e.g., why WebRTC was chosen over raw WebSockets, and how session state is managed).
+This project implements a highly optimized voice pipeline. Below is the high-level data flow:
+
+```text
+ ┌────────────────────┐
+ │ Browser (React)    │
+ │ Microphone & UI    │
+ └─────────┬──────────┘
+           │
+     WebRTC (LiveKit)
+           │
+           ▼
+ ┌────────────────────┐
+ │ Voice Backend      │
+ │ (Python/FastAPI)   │
+ └─────────┬──────────┘
+           │
+ ┌─────────┼──────────┐
+ ▼         ▼          ▼
+ STT      LLM        TTS
+ │         │          │
+ └─────────┼──────────┘
+           │
+           ▼
+     Audio Stream (Opus)
+           │
+           ▼
+ ┌────────────────────┐
+ │ Browser (React)    │
+ │ Audio Playback     │
+ └────────────────────┘
+```
+
+For a deeper dive into the pipeline latency waterfall, technology choices (WebRTC vs WebSockets), and our ghost-audio prevention protocol, please see the detailed [`ARCHITECTURE.md`](./ARCHITECTURE.md) document.
 
 ---
 
