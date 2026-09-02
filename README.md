@@ -3,6 +3,7 @@
 This project is a high-performance, real-time voice AI assistant built for ultra-low latency conversational interactions. It utilizes WebRTC for continuous audio streaming, Deepgram for streaming STT/TTS, and Groq for blazing-fast LLM token generation.
 
 ## Features Implemented
+- **Dynamic Agent Creation:** Go beyond hardcoded prompts! Users can configure new agents in the UI with custom names, objectives, system prompts, and upload PDF/TXT knowledge reference files.
 - **WebRTC Streaming:** Full-duplex, low-latency audio via LiveKit, entirely avoiding the overhead of raw WebSocket audio processing.
 - **Progressive UI:** Real-time interim STT transcripts and token-by-token LLM streaming.
 - **Latency Telemetry:** True timestamp-based measurement of STT, LLM TTFT (Time to First Token), and TTS TTFB (Time to First Byte).
