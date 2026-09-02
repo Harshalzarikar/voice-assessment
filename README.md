@@ -95,8 +95,10 @@ python agent_worker.py start
 ```
 
 ### 5. Open the Application
-Navigate to `http://localhost:5173` in your browser. Click **Connect** and begin speaking!
-
+Navigate to `http://localhost:5173` in your browser. 
+1. Click **Create Agent**.
+2. Give your agent a name and write a **System Prompt / Goal** (e.g., "You are a helpful math tutor").
+3. Click **Start Session** and begin speaking!
 ---
 
 ## Testing Logical Challenges (Reviewer Guide)
