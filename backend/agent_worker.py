@@ -697,15 +697,6 @@ async def entrypoint(ctx: JobContext):
         except Exception:
             pass
 
-    # ── Event: agent error (Point 9: Wire provider errors) ──
-    @agent.on("error")
-    def on_agent_error(e):
-        logger.error(f"[AGENT] ❌ Provider Error: {e}")
-        asyncio.ensure_future(broadcast_event("pipeline_error", {
-            "source": "llm", # Could be STT, LLM, or TTS, but LLM is the most common for agent.on("error")
-            "message": f"Provider error: {e}",
-            "recoverable": True
-        }))
 
     # ── Event: conversation_item_added ──
     @session.on("conversation_item_added")
