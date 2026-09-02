@@ -618,9 +618,9 @@ async def entrypoint(ctx: JobContext):
                     stt_latency_ms = 0.0
                 turn_metrics["stt_latency_ms"] = round(stt_latency_ms, 1)
             else:
-                # Do not invent synthetic timestamps if VAD didn't fire an explicit stop event
-                stt_latency_ms = -1.0
-                turn_metrics["stt_latency_ms"] = -1.0
+                # STT beat the VAD! The text is already waiting when VAD stops.
+                stt_latency_ms = 0.0
+                turn_metrics["stt_latency_ms"] = 0.0
 
             asyncio.ensure_future(broadcast_event("final_transcript", {
                 "speaker": "user",
