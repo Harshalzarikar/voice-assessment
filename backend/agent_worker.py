@@ -484,17 +484,17 @@ async def entrypoint(ctx: JobContext):
                     await ctx.room.local_participant.publish_data(payload, reliable=True)
                 asyncio.ensure_future(simulate_duplicate())
 
-            # Robust STT endpointing latency computation
+            # Real STT endpointing latency computation
             user_stop = turn_metrics.get("user_stop")
-            if not user_stop:
-                user_start = turn_metrics.get("user_start", curr_time - 0.4)
-                user_stop = max(user_start, curr_time - 0.12)
-                turn_metrics["user_stop"] = user_stop
-                
-            stt_latency_ms = (curr_time - user_stop) * 1000
-            if stt_latency_ms < 0:
-                stt_latency_ms = 0.0
-            turn_metrics["stt_latency_ms"] = round(stt_latency_ms, 1)
+            if user_stop:
+                stt_latency_ms = (curr_time - user_stop) * 1000
+                if stt_latency_ms < 0:
+                    stt_latency_ms = 0.0
+                turn_metrics["stt_latency_ms"] = round(stt_latency_ms, 1)
+            else:
+                # Do not invent synthetic timestamps if VAD didn't fire an explicit stop event
+                stt_latency_ms = -1.0
+                turn_metrics["stt_latency_ms"] = -1.0
 
             asyncio.ensure_future(broadcast_event("final_transcript", {
                 "speaker": "user",

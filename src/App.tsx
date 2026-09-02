@@ -411,15 +411,15 @@ const VoiceSession = ({
             </div>
             <div className="metric-box">
               <span className="metric-lbl">STT Delay</span>
-              <span className="metric-val">{latestMetrics ? `${latestMetrics.stt_ms}ms` : '--'}</span>
+              <span className="metric-val">{latestMetrics && latestMetrics.stt_ms >= 0 ? `${latestMetrics.stt_ms}ms` : '--'}</span>
             </div>
             <div className="metric-box">
               <span className="metric-lbl">LLM TTFT</span>
-              <span className="metric-val">{latestMetrics ? `${latestMetrics.llm_ttft_ms}ms` : '--'}</span>
+              <span className="metric-val">{latestMetrics && latestMetrics.llm_ttft_ms >= 0 ? `${latestMetrics.llm_ttft_ms}ms` : '--'}</span>
             </div>
             <div className="metric-box">
               <span className="metric-lbl">TTS TTFB</span>
-              <span className="metric-val">{latestMetrics ? `${latestMetrics.tts_ttfb_ms}ms` : '--'}</span>
+              <span className="metric-val">{latestMetrics && latestMetrics.tts_ttfb_ms >= 0 ? `${latestMetrics.tts_ttfb_ms}ms` : '--'}</span>
             </div>
           </div>
         </div>
