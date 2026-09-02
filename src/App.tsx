@@ -911,7 +911,7 @@ const App = () => {
   // App-level error state so it survives component unmounts and can handle root LiveKitRoom errors
   const [errors, setErrors] = useState<PipelineError[]>([]);
   const [isDisconnected, setIsDisconnected] = useState(false);
-  const [roomKey, setRoomKey] = useState(0); // Point 10: Real reconnect logic
+
 
   const dismissError = (id: string) => {
     setErrors((prev) => prev.filter((e) => e.id !== id));
