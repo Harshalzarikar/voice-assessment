@@ -490,8 +490,8 @@ const VoiceSession = ({
           <div className="telemetry-grid">
             <div className="metric-box">
               <span className="metric-lbl">E2E Turn</span>
-              <span className={`metric-val ${latestMetrics && latestMetrics.e2e_ms < 500 ? 'text-success' : 'text-accent'}`}>
-                {latestMetrics ? `${latestMetrics.e2e_ms}ms` : '--'}
+              <span className={`metric-val ${latestMetrics && latestMetrics.e2e_ms >= 0 && latestMetrics.e2e_ms < 500 ? 'text-success' : 'text-accent'}`}>
+                {latestMetrics && latestMetrics.e2e_ms >= 0 ? `${latestMetrics.e2e_ms}ms` : '--'}
               </span>
             </div>
             <div className="metric-box">

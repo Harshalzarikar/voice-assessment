@@ -729,7 +729,12 @@ async def entrypoint(ctx: JobContext):
             payload = json.loads(dp.data.decode("utf-8"))
             if payload.get("type") == "playback_ack":
                 ack_time = time.perf_counter()
-                e2e_true = (ack_time - turn_metrics.get("user_stop", ack_time)) * 1000
+                
+                if "user_stop" in turn_metrics:
+                    e2e_true = (ack_time - turn_metrics["user_stop"]) * 1000
+                else:
+                    e2e_true = -1.0
+                    
                 logger.info(f"[PIPELINE: 7] 🌐 Browser confirmed audio playback! (⏱️ True E2E: {e2e_true:.1f}ms)")
                 
                 asyncio.ensure_future(broadcast_event("playback_ack_metrics", {
