@@ -1,10 +1,10 @@
-"""
-agent_worker.py — Optimised for low-latency real-time voice conversation.
+﻿"""
+agent_worker.py ΓÇö Optimised for low-latency real-time voice conversation.
 
 LATENCY PIPELINE:
-  User speaks → Deepgram STT (nova-3, 25ms endpointing, interim results)
-              → Groq LLM  (llama-3.1-8b-instant / gpt-oss-20b)
-              → Deepgram TTS (aura-2-andromeda-en ← streaming)
+  User speaks ΓåÆ Deepgram STT (nova-3, 25ms endpointing, interim results)
+              ΓåÆ Groq LLM  (llama-3.1-8b-instant / gpt-oss-20b)
+              ΓåÆ Deepgram TTS (aura-2-andromeda-en ΓåÉ streaming)
 
 ROBUSTNESS FEATURES:
   1. Per-turn Latency Telemetry (STT, LLM TTFT, TTS TTFB, E2E Turn Latency).
@@ -53,7 +53,7 @@ def load_agent_config(agent_id: str):
             return db.get(agent_id)
     return None
 
-# ── INPUT GUARDRAILS ──────────────────────────────────────────────────────────
+# ΓöÇΓöÇ INPUT GUARDRAILS ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 BLOCKED_TOPICS = [
     "hack", "exploit", "bomb", "illegal", "steal", "weapon",
     "how to make drugs", "bypass security", "jailbreak",
@@ -101,10 +101,10 @@ async def entrypoint(ctx: JobContext):
     agent_id = parts[1] if len(parts) > 1 else None
     config = load_agent_config(agent_id) if agent_id else None
 
-    # ── IMMUTABLE SAFETY PROMPT ──
+    # ΓöÇΓöÇ IMMUTABLE SAFETY PROMPT ΓöÇΓöÇ
     BASE_SAFETY_PROMPT = (
         "You are a helpful, friendly AI voice assistant. "
-        "Keep your responses SHORT and conversational — ideally 1-3 sentences. "
+        "Keep your responses SHORT and conversational ΓÇö ideally 1-3 sentences. "
         "Never use bullet points or markdown in speech. "
         "Speak naturally as if talking to a person. "
         "ONLY use the web_search tool when the user asks about REAL-TIME or CURRENT information "
@@ -128,7 +128,7 @@ async def entrypoint(ctx: JobContext):
     else:
         system_prompt = BASE_SAFETY_PROMPT + "You are a helpful, friendly AI voice assistant."
 
-    logger.info(f"[ROOM] 🔗 Connecting to room: {ctx.room.name}")
+    logger.info(f"[ROOM] ≡ƒöù Connecting to room: {ctx.room.name}")
 
     try:
         await asyncio.wait_for(
@@ -136,13 +136,13 @@ async def entrypoint(ctx: JobContext):
             timeout=15.0,
         )
     except asyncio.TimeoutError:
-        logger.error(f"[ROOM] ❌ Room connection timed out: {ctx.room.name}")
+        logger.error(f"[ROOM] Γ¥î Room connection timed out: {ctx.room.name}")
         return
     except Exception as e:
-        logger.error(f"[ROOM] ❌ Failed to connect to {ctx.room.name}: {e}")
+        logger.error(f"[ROOM] Γ¥î Failed to connect to {ctx.room.name}: {e}")
         return
 
-    logger.info(f"[ROOM] ✅ Connected to room: {ctx.room.name}")
+    logger.info(f"[ROOM] Γ£à Connected to room: {ctx.room.name}")
 
     # Sequence counter for monotonic data messaging
     msg_seq = 0
@@ -164,18 +164,19 @@ async def entrypoint(ctx: JobContext):
         except Exception as err:
             logger.debug(f"[DATA] Failed to broadcast event {event_type}: {err}")
 
-    # ── STT: Deepgram nova-3 ──
-    logger.info("[STT] 🎙️ Initializing Deepgram STT (model=nova-3, lang=en-US, endpointing=25ms)")
+    # ΓöÇΓöÇ STT: Deepgram nova-3 ΓöÇΓöÇ
+    logger.info("[STT] ≡ƒÄÖ∩╕Å Initializing Deepgram STT (model=nova-3, lang=en-US, endpointing=25ms)")
     stt = deepgram.STT(
         model="nova-3",
         language="en-US",
         interim_results=True,
         smart_format=False,
         no_delay=True,
+        endpointing_ms=25,
         filler_words=True,
     )
 
-    # ── LLM: Groq with FallbackAdapter ──
+    # ΓöÇΓöÇ LLM: Groq with FallbackAdapter ΓöÇΓöÇ
     groq_key = os.environ.get("GROQ_API_KEY")
     llm_options = []
     if groq_key:
@@ -191,7 +192,7 @@ async def entrypoint(ctx: JobContext):
         ))
 
     if not llm_options:
-        logger.error("[LLM] ❌ No LLM keys found. Set GROQ_API_KEY.")
+        logger.error("[LLM] Γ¥î No LLM keys found. Set GROQ_API_KEY.")
         await broadcast_event("pipeline_error", {
             "source": "llm",
             "message": "Groq API key is missing.",
@@ -259,8 +260,8 @@ async def entrypoint(ctx: JobContext):
     llm = llm_wrapper
     # -----------------------------------------
 
-    # ── TTS: Deepgram aura-2 streaming ──
-    logger.info("[TTS] 🔊 Initializing Deepgram TTS (model=aura-2-andromeda-en, sample_rate=24000)")
+    # ΓöÇΓöÇ TTS: Deepgram aura-2 streaming ΓöÇΓöÇ
+    logger.info("[TTS] ≡ƒöè Initializing Deepgram TTS (model=aura-2-andromeda-en, sample_rate=24000)")
     base_tts = deepgram.TTS(
         model="aura-2-andromeda-en",
         sample_rate=24000,
@@ -307,7 +308,7 @@ async def entrypoint(ctx: JobContext):
                 
             async def get_next_chunk():
                 if self.wrapper.delay_active:
-                    logger.info("[TTS] 🕒 Simulating 3-second TTS delay...")
+                    logger.info("[TTS] ≡ƒòÆ Simulating 3-second TTS delay...")
                     await asyncio.sleep(3.0)
                     self.wrapper.delay_active = False
                 return await self.st.__anext__()
@@ -315,11 +316,10 @@ async def entrypoint(ctx: JobContext):
             try:
                 chunk = await asyncio.wait_for(get_next_chunk(), timeout=2.5)
                 if "ttfb" not in turn_metrics:
-                    if hasattr(chunk, 'frame') and chunk.frame and len(chunk.frame.data) > 0:
-                        turn_metrics["ttfb"] = time.perf_counter()
+                    turn_metrics["ttfb"] = time.perf_counter()
                 return chunk
             except asyncio.TimeoutError:
-                logger.warning("[TTS] ⚠️ TTS generation timed out! Applying backpressure and fallback.")
+                logger.warning("[TTS] ΓÜá∩╕Å TTS generation timed out! Applying backpressure and fallback.")
                 self.cancelled = True
                 
                 asyncio.ensure_future(broadcast_event("pipeline_error", {
@@ -355,11 +355,11 @@ async def entrypoint(ctx: JobContext):
     async def web_search(query: str):
         tavily_key = os.environ.get("TAVILY_API_KEY")
         if not tavily_key or tavily_key == "your_tavily_api_key_here":
-            logger.error("[TOOL] ❌ Tavily API key is missing!")
+            logger.error("[TOOL] Γ¥î Tavily API key is missing!")
             return "Error: Tavily API key is missing. Please tell the user to configure it."
         client = AsyncTavilyClient(api_key=tavily_key)
         try:
-            logger.info(f"[TOOL] 🌐 Web search triggered: query='{query}'")
+            logger.info(f"[TOOL] ≡ƒîÉ Web search triggered: query='{query}'")
             response = await asyncio.wait_for(
                 client.search(query=query, search_depth="basic", max_results=3),
                 timeout=4.0
@@ -372,13 +372,13 @@ async def entrypoint(ctx: JobContext):
             summary = response.get("answer", "")
             output = summary + "\n" + "\n".join(results) if summary else "\n".join(results)
             output = output[:2000]
-            logger.info(f"[TOOL] ✅ Web search returned {len(output)} chars")
+            logger.info(f"[TOOL] Γ£à Web search returned {len(output)} chars")
             return output
         except asyncio.TimeoutError:
-            logger.warning("[TOOL] ⚠️ Web search timed out (4s budget exceeded). Degrading gracefully.")
+            logger.warning("[TOOL] ΓÜá∩╕Å Web search timed out (4s budget exceeded). Degrading gracefully.")
             return "Search request timed out. Proceeding with immediate conversational answer."
         except Exception as e:
-            logger.error(f"[TOOL] ❌ Web search failed: {e}")
+            logger.error(f"[TOOL] Γ¥î Web search failed: {e}")
             return f"Failed to search the web: {e}"
 
     agent = Agent(
@@ -408,13 +408,13 @@ async def entrypoint(ctx: JobContext):
     )
 
     await session.start(agent, room=ctx.room)
-    logger.info("[SESSION] ✅ AgentSession started with telemetry & ghost-audio prevention.\n")
+    logger.info("[SESSION] Γ£à AgentSession started with telemetry & ghost-audio prevention.\n")
 
-    # ── EVENT: Session Error & Close (Point 9) ──
+    # ΓöÇΓöÇ EVENT: Session Error & Close (Point 9) ΓöÇΓöÇ
     @session.on("error")
     def on_session_error(e: Exception):
         nonlocal current_generation_id, turn_count
-        logger.error(f"[SESSION] ❌ Session Error: {e}")
+        logger.error(f"[SESSION] Γ¥î Session Error: {e}")
         
         # Map failure
         err_str = str(e).lower()
@@ -447,14 +447,14 @@ async def entrypoint(ctx: JobContext):
 
     @session.on("close")
     def on_session_close(reason):
-        logger.error(f"[SESSION] 🛑 Session Closed: {reason}")
+        logger.error(f"[SESSION] ≡ƒ¢æ Session Closed: {reason}")
         asyncio.ensure_future(broadcast_event("pipeline_error", {
             "source": "webrtc",
             "message": f"Session closed: {reason}",
             "recoverable": False
         }))
 
-    # ── PIPELINE STATE & TELEMETRY TRACKING ──
+    # ΓöÇΓöÇ PIPELINE STATE & TELEMETRY TRACKING ΓöÇΓöÇ
     turn_count = 0
     current_generation_id = f"gen_0_{uuid.uuid4().hex[:6]}"
     turn_metrics = {}
@@ -481,7 +481,7 @@ async def entrypoint(ctx: JobContext):
         
         # Explicitly cancel the old LLM stream
         if hasattr(llm_wrapper, 'active_stream') and llm_wrapper.active_stream is not None:
-            logger.info(f"[PIPELINE] 🛑 Explicitly closing LLM stream for cancelled generation: {old_generation}")
+            logger.info(f"[PIPELINE] ≡ƒ¢æ Explicitly closing LLM stream for cancelled generation: {old_generation}")
             asyncio.ensure_future(llm_wrapper.active_stream.aclose())
             llm_wrapper.active_stream = None
         
@@ -498,7 +498,7 @@ async def entrypoint(ctx: JobContext):
             "generation_id": current_generation_id,
             "turn": turn_count
         })
-        logger.info(f"[PIPELINE: 1] 🎤 User started speaking (Turn #{turn_count}, Gen={current_generation_id})")
+        logger.info(f"[PIPELINE: 1] ≡ƒÄñ User started speaking (Turn #{turn_count}, Gen={current_generation_id})")
 
     @session.on("user_state_changed")
     def on_user_state_changed(ev):
@@ -512,9 +512,9 @@ async def entrypoint(ctx: JobContext):
             turn_metrics["user_stop"] = time.perf_counter()
             duration_ms = (turn_metrics["user_stop"] - turn_metrics.get("user_start", turn_metrics["user_stop"])) * 1000
             turn_metrics["speech_duration_ms"] = round(duration_ms, 1)
-            logger.info(f"[PIPELINE: 2] ⏸️ User stopped speaking ({duration_ms:.0f}ms). Endpointing...")
+            logger.info(f"[PIPELINE: 2] ΓÅ╕∩╕Å User stopped speaking ({duration_ms:.0f}ms). Endpointing...")
 
-    # ── Event: user_input_transcribed ──
+    # ΓöÇΓöÇ Event: user_input_transcribed ΓöÇΓöÇ
     @session.on("user_input_transcribed")
     def on_user_input_transcribed(ev):
         nonlocal turn_metrics, current_generation_id
@@ -535,12 +535,12 @@ async def entrypoint(ctx: JobContext):
             
             # TRIGGER FOR TTS BACKPRESSURE REQUIREMENT #5
             if "simulate delay" in text_clean.lower():
-                logger.info("[PIPELINE] 🚨 Trigger word 'simulate delay' detected! Next TTS stream will stall for 3s.")
+                logger.info("[PIPELINE] ≡ƒÜ¿ Trigger word 'simulate delay' detected! Next TTS stream will stall for 3s.")
                 tts.delay_active = True
                 
             # TRIGGER FOR TURN BOOKKEEPING REQUIREMENT #1
             if "simulate utterance" in text_clean.lower():
-                logger.info("[PIPELINE] 🚨 Trigger word 'simulate utterance' detected! Firing simulated interims...")
+                logger.info("[PIPELINE] ≡ƒÜ¿ Trigger word 'simulate utterance' detected! Firing simulated interims...")
                 async def run_turn_test():
                     class FakeEv:
                         def __init__(self, t, f):
@@ -549,7 +549,7 @@ async def entrypoint(ctx: JobContext):
                     
                     # Wait for current turn to fully settle so we don't bleed states
                     await asyncio.sleep(2.0)
-                    logger.info("[TEST] 🧪 Simulating 3 interims and 1 final transcript...")
+                    logger.info("[TEST] ≡ƒº¬ Simulating 3 interims and 1 final transcript...")
                     
                     # Fire 3 fake interims
                     for i in range(3):
@@ -563,11 +563,11 @@ async def entrypoint(ctx: JobContext):
 
             # TRIGGER FOR DUPLICATE AUDIO SEGMENTS REQUIREMENT #7
             if "simulate duplicate" in text_clean.lower():
-                logger.info("[PIPELINE] 🚨 Trigger word 'simulate duplicate' detected! Simulating duplicate logical segments...")
+                logger.info("[PIPELINE] ≡ƒÜ¿ Trigger word 'simulate duplicate' detected! Simulating duplicate logical segments...")
                 async def run_dup_test():
                     await asyncio.sleep(2.0)
                     gen_id = f"gen_dup_{uuid.uuid4().hex[:6]}"
-                    logger.info("[TEST] 🧪 Simulating duplicate sequence: 101, 102, 102, 103")
+                    logger.info("[TEST] ≡ƒº¬ Simulating duplicate sequence: 101, 102, 102, 103")
                     
                     await broadcast_event("agent_delta", {"text": "A ", "generation_id": gen_id, "chunk_sequence": 101})
                     await asyncio.sleep(0.1)
@@ -582,7 +582,7 @@ async def entrypoint(ctx: JobContext):
                 
             # TRIGGER FOR CONTEXT WINDOW
             if "simulate context" in text_clean.lower():
-                logger.info("[PIPELINE] 🚨 Trigger word 'simulate context' detected! Injecting fake history.")
+                logger.info("[PIPELINE] ≡ƒÜ¿ Trigger word 'simulate context' detected! Injecting fake history.")
                 if hasattr(agent, 'chat_ctx') and hasattr(agent, 'update_chat_ctx'):
                     async def run_ctx_test():
                         ctx = agent.chat_ctx.copy()
@@ -605,7 +605,7 @@ async def entrypoint(ctx: JobContext):
                         # Now truncate
                         ctx.truncate(max_items=10)
                         await agent.update_chat_ctx(ctx)
-                        logger.info(f"[TEST] 🧪 Context truncated. New size: {len(agent.chat_ctx.messages)}. Tool call paired? {agent.chat_ctx.messages[-1].role == 'tool'}")
+                        logger.info(f"[TEST] ≡ƒº¬ Context truncated. New size: {len(agent.chat_ctx.messages)}. Tool call paired? {agent.chat_ctx.messages[-1].role == 'tool'}")
                     asyncio.ensure_future(run_ctx_test())
                 
 
@@ -630,40 +630,37 @@ async def entrypoint(ctx: JobContext):
                 "stt_latency_ms": round(stt_latency_ms, 1)
             }))
 
-            logger.info(f"[PIPELINE: 3] 📝 STT Final: '{text_clean}' (⏱️ STT Latency: {stt_latency_ms:.1f}ms)")
+            logger.info(f"[PIPELINE: 3] ≡ƒô¥ STT Final: '{text_clean}' (ΓÅ▒∩╕Å STT Latency: {stt_latency_ms:.1f}ms)")
 
-            # ── Guardrail check ──
+            # ΓöÇΓöÇ Guardrail check ΓöÇΓöÇ
             gr_start = time.perf_counter()
             guardrail_result = check_input_guardrail(text_clean)
             gr_ms = (time.perf_counter() - gr_start) * 1000
 
             if not guardrail_result["safe"]:
                 reason = guardrail_result["reason"]
-                logger.warning(f"[PIPELINE: 4] ❌ GUARDRAIL BLOCKED ({gr_ms:.1f}ms): {reason}")
+                logger.warning(f"[PIPELINE: 4] Γ¥î GUARDRAIL BLOCKED ({gr_ms:.1f}ms): {reason}")
                 if reason == "prompt_injection":
                     asyncio.ensure_future(session.say("I'm sorry, but I can't change my instructions."))
                 elif reason != "empty_input":
                     asyncio.ensure_future(session.say("I'm sorry, I'm not able to help with that topic."))
                 else:
                     # Empty input detected: Explicitly clear the turn and interrupt any pending auto-generation
-                    logger.info("[PIPELINE] 🚨 Suppressing automatic response for empty transcript.")
+                    logger.info("[PIPELINE] ≡ƒÜ¿ Suppressing automatic response for empty transcript.")
                     if hasattr(session, 'clear_user_turn'):
                         session.clear_user_turn()
                     if hasattr(session, 'interrupt'):
                         session.interrupt()
             else:
-                logger.info(f"[PIPELINE: 4] ✅ Guardrails passed ({gr_ms:.1f}ms). Sending to LLM...")
+                logger.info(f"[PIPELINE: 4] Γ£à Guardrails passed ({gr_ms:.1f}ms). Sending to LLM...")
 
-    # ── Event: agent_state_changed ──
+    # ΓöÇΓöÇ Event: agent_state_changed ΓöÇΓöÇ
     @session.on("agent_state_changed")
     def on_agent_state_changed(ev):
         nonlocal turn_metrics, current_generation_id
-        logger.info(f"[AGENT] State: {ev.old_state} → {ev.new_state}")
+        logger.info(f"[AGENT] State: {ev.old_state} ΓåÆ {ev.new_state}")
 
         if ev.new_state == "thinking":
-            # Clear old progressive timestamps in case this is a secondary generation in the same turn
-            turn_metrics.pop("llm_start", None)
-            turn_metrics.pop("ttfb", None)
             turn_metrics["thinking_start"] = time.perf_counter()
             asyncio.ensure_future(broadcast_event("pipeline_status", {
                 "state": "thinking",
@@ -704,7 +701,7 @@ async def entrypoint(ctx: JobContext):
                 tts_first_audio_frame = ttfb_time
                 browser_first_playback = -1 # Populated later by data channel ack
 
-                logger.info(f"[PIPELINE: 6] 🔊 AI Audio Synthesized! (⏱️ TTS TTFB: {tts_ttfb_ms:.1f}ms)")
+                logger.info(f"[PIPELINE: 6] ≡ƒöè AI Audio Synthesized! (ΓÅ▒∩╕Å TTS TTFB: {tts_ttfb_ms:.1f}ms)")
 
                 asyncio.ensure_future(broadcast_event("turn_metrics", {
                     "turn": turn_count,
@@ -725,7 +722,7 @@ async def entrypoint(ctx: JobContext):
                     }
                 }))
 
-    # ── Event: data_received (Browser Ack) ──
+    # ΓöÇΓöÇ Event: data_received (Browser Ack) ΓöÇΓöÇ
     @ctx.room.on("data_received")
     def on_data_received(dp):
         try:
@@ -738,7 +735,7 @@ async def entrypoint(ctx: JobContext):
                 else:
                     e2e_true = -1.0
                     
-                logger.info(f"[PIPELINE: 7] 🌐 Browser confirmed audio playback! (⏱️ True E2E: {e2e_true:.1f}ms)")
+                logger.info(f"[PIPELINE: 7] ≡ƒîÉ Browser confirmed audio playback! (ΓÅ▒∩╕Å True E2E: {e2e_true:.1f}ms)")
                 
                 asyncio.ensure_future(broadcast_event("playback_ack_metrics", {
                     "generation_id": current_generation_id,
@@ -749,7 +746,7 @@ async def entrypoint(ctx: JobContext):
             pass
 
 
-    # ── Event: conversation_item_added ──
+    # ΓöÇΓöÇ Event: conversation_item_added ΓöÇΓöÇ
     @session.on("conversation_item_added")
     def on_conversation_item_added(ev):
         nonlocal turn_metrics, current_generation_id
@@ -760,13 +757,13 @@ async def entrypoint(ctx: JobContext):
             role = item.role
             content_clean = clean_content_text(item.content)
             if role == "user":
-                logger.info(f"[CONVERSATION] 👤 USER: '{content_clean}'")
+                logger.info(f"[CONVERSATION] ≡ƒæñ USER: '{content_clean}'")
             elif role == "assistant":
-                logger.info(f"[CONVERSATION] 🤖 ASSISTANT: '{content_clean[:200]}'")
+                logger.info(f"[CONVERSATION] ≡ƒñû ASSISTANT: '{content_clean[:200]}'")
                 if "user_start" in turn_metrics:
                     total_ms = (time.perf_counter() - turn_metrics["user_start"]) * 1000
-                    logger.info(f"[PIPELINE: 7] ✅ Turn #{turn_count} complete ({total_ms:.0f}ms total)")
-                    logger.info("─" * 60)
+                    logger.info(f"[PIPELINE: 7] Γ£à Turn #{turn_count} complete ({total_ms:.0f}ms total)")
+                    logger.info("ΓöÇ" * 60)
 
                 # Check if this response's generation is still active (ghost guard)
                 if cancelledGenerations_set and response_gen_id in cancelledGenerations_set:
@@ -781,30 +778,30 @@ async def entrypoint(ctx: JobContext):
                     "turn": turn_count
                 }))
 
-        # ── RELIABLE SLIDING WINDOW RETENTION (Latest 10 items / 5-10 turns) ──
+        # ΓöÇΓöÇ RELIABLE SLIDING WINDOW RETENTION (Latest 10 items / 5-10 turns) ΓöÇΓöÇ
         try:
             if hasattr(agent, 'chat_ctx') and hasattr(agent, 'update_chat_ctx'):
                 ctx = agent.chat_ctx.copy()
                 if len(ctx.messages) > 11:
-                    logger.info("[MEMORY] 🗜️ Context sliding window retained: System prompt + latest 10 messages (5 turns).")
+                    logger.info("[MEMORY] ≡ƒù£∩╕Å Context sliding window retained: System prompt + latest 10 messages (5 turns).")
                     ctx.truncate(max_items=11)
                     asyncio.ensure_future(agent.update_chat_ctx(ctx))
         except Exception as e:
             logger.debug(f"[MEMORY] Context limit check failed: {e}")
 
-    # ── Event: function_tools_executed ──
+    # ΓöÇΓöÇ Event: function_tools_executed ΓöÇΓöÇ
     @session.on("function_tools_executed")
     def on_tools_executed(ev):
         for call in ev.function_calls:
-            logger.info(f"[TOOL] 🔧 Tool executed: {call.name}")
+            logger.info(f"[TOOL] ≡ƒöº Tool executed: {call.name}")
 
     # Greet immediately
-    logger.info("[PIPELINE: 0] 👋 Agent connected. Sending initial greeting...")
+    logger.info("[PIPELINE: 0] ≡ƒæï Agent connected. Sending initial greeting...")
     await session.say(
         "Hello! I'm ready. What can I help you with?",
         allow_interruptions=True,
     )
-    logger.info("[PIPELINE: 0] ✅ Greeting delivered. Waiting for user speech...\n")
+    logger.info("[PIPELINE: 0] Γ£à Greeting delivered. Waiting for user speech...\n")
 
 
 if __name__ == "__main__":
