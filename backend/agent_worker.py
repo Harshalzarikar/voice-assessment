@@ -172,6 +172,7 @@ async def entrypoint(ctx: JobContext):
         interim_results=True,
         smart_format=False,
         no_delay=True,
+        endpointing_ms=25,
         filler_words=True,
     )
 
