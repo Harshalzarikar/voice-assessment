@@ -339,7 +339,7 @@ const VoiceSession = ({
     return () => {
       room.off(RoomEvent.DataReceived, handleDataReceived);
     };
-  }, [room, activeGenerationId, cancelledGenerations]);
+  }, [room, activeGenerationId, cancelledGenerations, setErrors]);
 
   // Auto-scroll transcript container
   useEffect(() => {
@@ -830,10 +830,6 @@ const App = () => {
   const [prompt, setPrompt] = useState('');
   const [file, setFile] = useState<File | null>(null);
 
-  useEffect(() => {
-    fetchAgents();
-  }, []);
-
   const fetchAgents = async () => {
     try {
       const res = await axios.get(`${API_BASE}/api/agents`);
@@ -842,6 +838,11 @@ const App = () => {
       log('API', '❌ Failed to fetch agents', err);
     }
   };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchAgents();
+  }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -856,7 +857,7 @@ const App = () => {
       await fetchAgents();
       setShowCreate(false);
       setName(''); setObjective(''); setPrompt(''); setFile(null);
-    } catch (err) {
+    } catch {
       alert("Error creating agent");
     } finally {
       setLoading(false);
@@ -866,6 +867,7 @@ const App = () => {
   const startTalk = async (agent: Agent) => {
     setLoading(true);
     try {
+      // eslint-disable-next-line react-hooks/purity
       const roomName = `agent_${agent.id}_${Math.random().toString(36).substring(7)}`;
       const res = await axios.post(`${API_BASE}/api/token`, {
         room_name: roomName,
@@ -873,7 +875,7 @@ const App = () => {
       });
       setConnectionDetails(res.data);
       setActiveAgent(agent);
-    } catch (err) {
+    } catch {
       alert("Error starting voice session");
     } finally {
       setLoading(false);
