@@ -79,3 +79,5 @@ yarl==1.23.0
 zipp==3.23.1
 gunicorn
 tavily-python
+
+livekit-plugins-silero~=0.4

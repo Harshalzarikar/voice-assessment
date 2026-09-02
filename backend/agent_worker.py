@@ -29,7 +29,7 @@ from livekit.agents.voice import Agent, AgentSession
 from livekit.agents.llm import FallbackAdapter
 from livekit.agents import llm as agents_llm
 from livekit.agents import tts as agents_tts
-from livekit.plugins import deepgram, openai
+from livekit.plugins import deepgram, openai, silero
 from tavily import AsyncTavilyClient
 
 load_dotenv()
@@ -383,6 +383,7 @@ async def entrypoint(ctx: JobContext):
             return f"Failed to search the web: {e}"
 
     agent = Agent(
+        vad=silero.VAD.load(),
         stt=stt,
         llm=llm,
         tts=tts,
