@@ -1051,7 +1051,7 @@ const App = () => {
                 }}
                 onMediaDeviceFailure={(failure) => {
                   log('ROOM', `❌ Media device failure: ${failure}`);
-                  setErrors((prev) => [...prev, { id: `err_${Date.now()}`, source: 'mic', message: `Microphone device failure: ${failure?.message || failure}`, timestamp: new Date().toLocaleTimeString(), recoverable: true }]);
+                  setErrors((prev) => [...prev, { id: `err_${Date.now()}`, source: 'mic', message: `Microphone device failure: ${failure}`, timestamp: new Date().toLocaleTimeString(), recoverable: true }]);
                 }}
                 style={{ height: '100%', display: 'flex', flexDirection: 'column', flex: 1 }}
               >
