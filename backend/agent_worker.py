@@ -435,13 +435,15 @@ async def entrypoint(ctx: JobContext):
         })
         logger.info(f"[PIPELINE: 1] 🎤 User started speaking (Turn #{turn_count}, Gen={current_generation_id})")
 
-    # ── Event: user_state_changed ──
     @session.on("user_state_changed")
     def on_user_state_changed(ev):
         nonlocal turn_metrics
-        if str(ev.new_state) == "speaking":
+        new_state_str = str(ev.new_state).lower()
+        old_state_str = str(ev.old_state).lower()
+        
+        if "speaking" in new_state_str:
             start_user_turn_if_needed()
-        elif str(ev.new_state) == "listening" and str(ev.old_state) == "speaking":
+        elif "listening" in new_state_str and "speaking" in old_state_str:
             turn_metrics["user_stop"] = time.perf_counter()
             duration_ms = (turn_metrics["user_stop"] - turn_metrics.get("user_start", turn_metrics["user_stop"])) * 1000
             turn_metrics["speech_duration_ms"] = round(duration_ms, 1)
