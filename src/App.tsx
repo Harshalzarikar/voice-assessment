@@ -1134,7 +1134,6 @@ const App = () => {
               {/* LiveKit Room */}
               <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="glass-panel" style={{ flex: 1, overflow: 'hidden' }}>
               <LiveKitRoom
-                key={roomKey}
                 token={connectionDetails.token}
                 serverUrl={connectionDetails.url}
                 connect={true}
