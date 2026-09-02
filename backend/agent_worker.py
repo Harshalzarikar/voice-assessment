@@ -536,34 +536,34 @@ async def entrypoint(ctx: JobContext):
                 
                 asyncio.ensure_future(run_dup_test())
                 
-            # TRIGGER FOR ERROR RECOVERY
-            if "simulate error" in text_clean.lower():
-                logger.info("[PIPELINE] 🚨 Trigger word 'simulate error' detected! Emitting pipeline error.")
-                asyncio.ensure_future(broadcast_event("pipeline_error", {
-                    "source": "webrtc",
-                    "message": "Simulated WebRTC Failure for deterministic testing",
-                    "recoverable": True
-                }))
-
             # TRIGGER FOR CONTEXT WINDOW
             if "simulate context" in text_clean.lower():
                 logger.info("[PIPELINE] 🚨 Trigger word 'simulate context' detected! Injecting fake history.")
-                if hasattr(agent, 'chat_ctx'):
-                    for i in range(15):
-                        agent.chat_ctx.messages.append(agents_llm.ChatMessage(role="user", content=f"filler {i}"))
+                if hasattr(agent, 'chat_ctx') and hasattr(agent, 'update_chat_ctx'):
+                    async def run_ctx_test():
+                        ctx = agent.chat_ctx.copy()
+                        for i in range(15):
+                            ctx.messages.append(agents_llm.ChatMessage(
+                                role="user",
+                                content=f"Test historical message {i}"
+                            ))
+                        # Add a tool call and its output
+                        ctx.messages.append(agents_llm.ChatMessage(
+                            role="assistant",
+                            tool_calls=[agents_llm.ChatContext.from_dict({"id": "call_123", "type": "function", "function": {"name": "test_tool", "arguments": "{}"}})]
+                        ))
+                        ctx.messages.append(agents_llm.ChatMessage(
+                            role="tool",
+                            name="test_tool",
+                            tool_call_id="call_123",
+                            content="Tool output result"
+                        ))
+                        # Now truncate
+                        ctx.truncate(max_items=10)
+                        await agent.update_chat_ctx(ctx)
+                        logger.info(f"[TEST] 🧪 Context truncated. New size: {len(agent.chat_ctx.messages)}. Tool call paired? {agent.chat_ctx.messages[-1].role == 'tool'}")
+                    asyncio.ensure_future(run_ctx_test())
                 
-            # TRIGGER FOR DUPLICATE PACKET REQUIREMENT #6
-            if "simulate duplicate" in text_clean.lower():
-                logger.info("[PIPELINE] 🚨 Trigger word 'simulate duplicate' detected! Broadcasting duplicate packet.")
-                async def simulate_duplicate():
-                    payload = json.dumps({
-                        "type": "duplicate_test",
-                        "seq": msg_seq, # Reuse the exact same sequence number as the last packet!
-                        "timestamp": time.time(),
-                        "data": {"test": True}
-                    }).encode("utf-8")
-                    await ctx.room.local_participant.publish_data(payload, reliable=True)
-                asyncio.ensure_future(simulate_duplicate())
 
             # Real STT endpointing latency computation
             user_stop = turn_metrics.get("user_stop")
@@ -732,18 +732,12 @@ async def entrypoint(ctx: JobContext):
 
         # ── RELIABLE SLIDING WINDOW RETENTION (Latest 10 items / 5-10 turns) ──
         try:
-            if hasattr(agent, 'chat_ctx') and hasattr(agent.chat_ctx, 'messages'):
-                messages = agent.chat_ctx.messages
-                if len(messages) > 11:
+            if hasattr(agent, 'chat_ctx') and hasattr(agent, 'update_chat_ctx'):
+                ctx = agent.chat_ctx.copy()
+                if len(ctx.messages) > 11:
                     logger.info("[MEMORY] 🗜️ Context sliding window retained: System prompt + latest 10 messages (5 turns).")
-                    while len(messages) > 11:
-                        messages.pop(1)
-            elif hasattr(session, 'chat_ctx') and hasattr(session.chat_ctx, 'messages'):
-                messages = session.chat_ctx.messages
-                if len(messages) > 11:
-                    logger.info("[MEMORY] 🗜️ Context sliding window retained: System prompt + latest 10 messages (5 turns).")
-                    while len(messages) > 11:
-                        messages.pop(1)
+                    ctx.truncate(max_items=11)
+                    asyncio.ensure_future(agent.update_chat_ctx(ctx))
         except Exception as e:
             logger.debug(f"[MEMORY] Context limit check failed: {e}")
 
