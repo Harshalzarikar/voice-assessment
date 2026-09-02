@@ -209,6 +209,7 @@ async def entrypoint(ctx: JobContext):
             # Capture immutable generation when stream starts (Point 2)
             self.generation_id = current_generation_id
             self.turn = turn_count
+            self.seq = 0
 
         def __aiter__(self):
             return self
@@ -220,10 +221,12 @@ async def entrypoint(ctx: JobContext):
                     turn_metrics["llm_start"] = time.perf_counter()
                 delta = chunk.delta.content
                 if delta:
+                    self.seq += 1
                     asyncio.ensure_future(broadcast_event("agent_delta", {
                         "text": delta,
                         "generation_id": self.generation_id,
-                        "turn": self.turn
+                        "turn": self.turn,
+                        "chunk_sequence": self.seq
                     }))
             return chunk
 
@@ -513,6 +516,25 @@ async def entrypoint(ctx: JobContext):
                     on_user_input_transcribed(FakeEv("test utterance final", True))
                     
                 asyncio.ensure_future(run_turn_test())
+
+            # TRIGGER FOR DUPLICATE AUDIO SEGMENTS REQUIREMENT #7
+            if "simulate duplicate" in text_clean.lower():
+                logger.info("[PIPELINE] 🚨 Trigger word 'simulate duplicate' detected! Simulating duplicate logical segments...")
+                async def run_dup_test():
+                    await asyncio.sleep(2.0)
+                    gen_id = f"gen_dup_{uuid.uuid4().hex[:6]}"
+                    logger.info("[TEST] 🧪 Simulating duplicate sequence: 101, 102, 102, 103")
+                    
+                    await broadcast_event("agent_delta", {"text": "A ", "generation_id": gen_id, "chunk_sequence": 101})
+                    await asyncio.sleep(0.1)
+                    await broadcast_event("agent_delta", {"text": "B ", "generation_id": gen_id, "chunk_sequence": 102})
+                    await asyncio.sleep(0.1)
+                    # The duplicate 102!
+                    await broadcast_event("agent_delta", {"text": "B ", "generation_id": gen_id, "chunk_sequence": 102})
+                    await asyncio.sleep(0.1)
+                    await broadcast_event("agent_delta", {"text": "C", "generation_id": gen_id, "chunk_sequence": 103})
+                
+                asyncio.ensure_future(run_dup_test())
                 
             # TRIGGER FOR ERROR RECOVERY
             if "simulate error" in text_clean.lower():

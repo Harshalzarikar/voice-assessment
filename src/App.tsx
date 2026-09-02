@@ -160,6 +160,7 @@ const VoiceSession = ({
   // Refs for closure-safe access inside the data channel listener
   const activeGenerationIdRef = useRef<string>('gen_0');
   const cancelledGenerationsRef = useRef<Set<string>>(new Set());
+  const lastChunkSeqRef = useRef<Map<string, number>>(new Map());
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [interimUserText, setInterimUserText] = useState<string>('');
   const [latestMetrics, setLatestMetrics] = useState<TurnMetric | null>(null);
@@ -263,6 +264,19 @@ const VoiceSession = ({
         else if (type === 'agent_delta') {
           // Point 3 & 5: Reject cancelled deltas and store progressive text by generation
           if (!cancelledGenerationsRef.current.has(data.generation_id)) {
+            
+            // Point 7: Logical Audio / Message Duplication Rejection
+            const currentSeq = lastChunkSeqRef.current.get(data.generation_id) || -1;
+            const msgSeq = data.chunk_sequence;
+            
+            if (msgSeq !== undefined && msgSeq <= currentSeq) {
+              log('DUPLICATE', `🚫 Rejected duplicate agent_delta seq ${msgSeq} for gen ${data.generation_id}`);
+              return; // Drop duplicate!
+            }
+            if (msgSeq !== undefined) {
+              lastChunkSeqRef.current.set(data.generation_id, msgSeq);
+            }
+
             setInterimAgentText((prev) => ({
               ...prev,
               [data.generation_id]: (prev[data.generation_id] || '') + (data.text || '')
