@@ -91,6 +91,13 @@ interface Agent {
 }
 
 interface TurnMetric {
+  speech_end?: number;
+  stt_final?: number;
+  llm_request_start?: number;
+  llm_first_nonempty_delta?: number;
+  tts_request_start?: number;
+  tts_first_audio_frame?: number;
+  browser_first_playback?: number;
   stt_ms: number;
   llm_ttft_ms: number;
   tts_ttfb_ms: number;
@@ -149,6 +156,10 @@ const VoiceSession = ({
   // Ghost Audio Prevention & Turn History State
   const [activeGenerationId, setActiveGenerationId] = useState<string>('gen_0');
   const [cancelledGenerations, setCancelledGenerations] = useState<Set<string>>(new Set());
+  
+  // Refs for closure-safe access inside the data channel listener
+  const activeGenerationIdRef = useRef<string>('gen_0');
+  const cancelledGenerationsRef = useRef<Set<string>>(new Set());
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [interimUserText, setInterimUserText] = useState<string>('');
   const [latestMetrics, setLatestMetrics] = useState<TurnMetric | null>(null);
@@ -224,7 +235,11 @@ const VoiceSession = ({
         if (type === 'generation_cancelled') {
           const { cancelled_generation_id, new_generation_id, reason } = data;
           log('GHOST_GUARD', `🚫 Generation cancelled: ${cancelled_generation_id} (Reason: ${reason}). New gen: ${new_generation_id}`);
-          setCancelledGenerations((prev) => new Set(prev).add(cancelled_generation_id));
+          
+          cancelledGenerationsRef.current.add(cancelled_generation_id);
+          activeGenerationIdRef.current = new_generation_id;
+          
+          setCancelledGenerations(new Set(cancelledGenerationsRef.current));
           setActiveGenerationId(new_generation_id);
           setInterimUserText('');
           setInterimAgentText(''); // Point 4: Immediately clear agent progressive text
@@ -241,15 +256,18 @@ const VoiceSession = ({
 
         // 2b. Progressive LLM streaming delta (agent text arriving token-by-token)
         else if (type === 'agent_delta') {
-          setInterimAgentText((prev) => prev + (data.text || ''));
+          // Point 3: Safely reject deltas that leak across generations
+          if (data.generation_id === activeGenerationIdRef.current && !cancelledGenerationsRef.current.has(data.generation_id)) {
+            setInterimAgentText((prev) => prev + (data.text || ''));
+          }
         }
 
         // 3. Final Transcript (User or Agent)
         else if (type === 'final_transcript') {
-          const genId = data.generation_id || activeGenerationId;
+          const genId = data.generation_id || activeGenerationIdRef.current;
 
           // Check if this generation was cancelled to prevent ghost turns
-          if (cancelledGenerations.has(genId) && data.speaker === 'agent') {
+          if (cancelledGenerationsRef.current.has(genId) && data.speaker === 'agent') {
             log('GHOST_GUARD', `🛡️ Discarded ghost transcript for cancelled generation: ${genId}`);
             return;
           }
@@ -468,8 +486,8 @@ const VoiceSession = ({
           />
         </div>
 
-        {/* Audio Renderer */}
-        <RoomAudioRenderer />
+        {/* Audio Renderer - Key forces unmount on barge-in to flush audio buffer (Point 4) */}
+        <RoomAudioRenderer key={activeGenerationId} />
 
         {/* Explicit Start/Stop Microphone Button (Assessment §2A) */}
         <button
@@ -575,8 +593,16 @@ const VoiceSession = ({
                     
                     {/* Per-Turn Latency Telemetry Breakdown */}
                     {isAgent && t.metrics && (
-                      <div className="bubble-metrics-tag">
-                        <Zap size={11} /> E2E: <strong>{t.metrics.e2e_ms}ms</strong> (STT: {t.metrics.stt_ms}ms · LLM: {t.metrics.llm_ttft_ms}ms · TTS: {t.metrics.tts_ttfb_ms}ms)
+                      <div className="bubble-metrics-tag" style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div><Zap size={11} /> E2E: <strong>{t.metrics.e2e_ms}ms</strong> (STT: {t.metrics.stt_ms}ms · LLM: {t.metrics.llm_ttft_ms}ms · TTS: {t.metrics.tts_ttfb_ms}ms)</div>
+                        <div style={{ fontSize: '0.85em', opacity: 0.8, borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '4px' }}>
+                          Boundaries: 
+                          [🎙️ {t.metrics.speech_end ? t.metrics.speech_end.toFixed(1) : '-'}s] → 
+                          [📝 {t.metrics.stt_final ? t.metrics.stt_final.toFixed(1) : '-'}s] → 
+                          [🧠 req:{t.metrics.llm_request_start ? t.metrics.llm_request_start.toFixed(1) : '-'}s / tok:{t.metrics.llm_first_nonempty_delta ? t.metrics.llm_first_nonempty_delta.toFixed(1) : '-'}s] → 
+                          [🔊 req:{t.metrics.tts_request_start ? t.metrics.tts_request_start.toFixed(1) : '-'}s / aud:{t.metrics.tts_first_audio_frame ? t.metrics.tts_first_audio_frame.toFixed(1) : '-'}s] → 
+                          [🌐 play:{t.metrics.browser_first_playback && t.metrics.browser_first_playback > 0 ? t.metrics.browser_first_playback.toFixed(1) : '-'}s]
+                        </div>
                       </div>
                     )}
                   </div>

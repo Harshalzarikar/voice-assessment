@@ -200,6 +200,7 @@ sequenceDiagram
 | **LLM** | Groq primary model timeout | `FallbackAdapter` wrapping two models | Automatically fails over to `gpt-oss-120b` backup model. 2.5s backpressure timer shows warning banner. |
 | **Slow TTS** | Deepgram synthesis delay > 2.5s | Frontend timer in `useEffect` on `state === 'thinking'` | Yellow warning banner: "Backpressure guard active." Banner clears when agent starts speaking. |
 | **Data Messages** | Out-of-order or duplicate packets | Monotonic sequence counter (`seq`) | Drop packets where `seq <= last_seen_seq` to guarantee order integrity. |
+| **Logical Audio** | Duplicate audio payloads transmitted | RTP Sequence Numbers (WebRTC) | LiveKit relies on the standard WebRTC Real-Time Protocol (RTP). The transport layer inherently uses sequence numbers to reject duplicate logical audio payloads and handle jitter before the audio ever reaches the browser's playback buffer. |
 | **Empty Input** | User produces no meaningful speech | Input guardrail: `len(text) < 2` check | Silently filtered; no LLM invocation triggered. |
 | **Invalid API** | Malformed agent creation request | try/except with HTTPException in FastAPI | Returns structured 400/500 JSON error; prompt sanitization blocks malicious inputs. |
 | **Tool Timeout** | Tavily web search exceeds 4s budget | `asyncio.wait_for(timeout=4.0)` | Graceful fallback message: "Search timed out. Proceeding with conversational answer." |

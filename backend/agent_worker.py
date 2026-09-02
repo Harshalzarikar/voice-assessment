@@ -206,6 +206,9 @@ async def entrypoint(ctx: JobContext):
     class InterceptedLLMStream:
         def __init__(self, st: agents_llm.LLMStream):
             self.st = st
+            # Capture immutable generation when stream starts (Point 2)
+            self.generation_id = current_generation_id
+            self.turn = turn_count
 
         def __aiter__(self):
             return self
@@ -219,8 +222,8 @@ async def entrypoint(ctx: JobContext):
                 if delta:
                     asyncio.ensure_future(broadcast_event("agent_delta", {
                         "text": delta,
-                        "generation_id": turn_metrics.get("generation_id", current_generation_id),
-                        "turn": turn_count
+                        "generation_id": self.generation_id,
+                        "turn": self.turn
                     }))
             return chunk
 
@@ -589,12 +592,28 @@ async def entrypoint(ctx: JobContext):
                 turn_metrics["tts_ttfb_ms"] = round(tts_ttfb_ms, 1)
                 turn_metrics["e2e_ms"] = round(e2e_ms, 1)
 
+                # Raw boundaries exactly as requested by reviewer
+                speech_end = turn_metrics.get("user_stop", -1)
+                stt_final = turn_metrics.get("stt_finalized", -1)
+                llm_request_start = turn_metrics.get("thinking_start", -1)
+                llm_first_nonempty_delta = turn_metrics.get("llm_start", -1)
+                tts_request_start = llm_first_nonempty_delta
+                tts_first_audio_frame = ttfb_time
+                browser_first_playback = -1 # Populated later by data channel ack
+
                 logger.info(f"[PIPELINE: 6] 🔊 AI Audio Synthesized! (⏱️ TTS TTFB: {tts_ttfb_ms:.1f}ms)")
 
                 asyncio.ensure_future(broadcast_event("turn_metrics", {
                     "turn": turn_count,
                     "generation_id": response_gen_id,
                     "metrics": {
+                        "speech_end": speech_end,
+                        "stt_final": stt_final,
+                        "llm_request_start": llm_request_start,
+                        "llm_first_nonempty_delta": llm_first_nonempty_delta,
+                        "tts_request_start": tts_request_start,
+                        "tts_first_audio_frame": tts_first_audio_frame,
+                        "browser_first_playback": browser_first_playback,
                         "stt_ms": round(stt_ms, 1),
                         "llm_ttft_ms": round(llm_ttft_ms, 1),
                         "tts_ttfb_ms": round(tts_ttfb_ms, 1),
@@ -614,6 +633,16 @@ async def entrypoint(ctx: JobContext):
                 logger.info(f"[PIPELINE: 7] 🌐 Browser confirmed audio playback! (⏱️ True E2E: {e2e_true:.1f}ms)")
         except Exception:
             pass
+
+    # ── Event: agent error (Point 9: Wire provider errors) ──
+    @agent.on("error")
+    def on_agent_error(e):
+        logger.error(f"[AGENT] ❌ Provider Error: {e}")
+        asyncio.ensure_future(broadcast_event("pipeline_error", {
+            "source": "llm", # Could be STT, LLM, or TTS, but LLM is the most common for agent.on("error")
+            "message": f"Provider error: {e}",
+            "recoverable": True
+        }))
 
     # ── Event: conversation_item_added ──
     @session.on("conversation_item_added")
