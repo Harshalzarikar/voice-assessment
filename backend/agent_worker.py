@@ -445,6 +445,15 @@ async def entrypoint(ctx: JobContext):
             "recoverable": True
         }))
 
+    @session.on("close")
+    def on_session_close(reason):
+        logger.error(f"[SESSION] 🛑 Session Closed: {reason}")
+        asyncio.ensure_future(broadcast_event("pipeline_error", {
+            "source": "webrtc",
+            "message": f"Session closed: {reason}",
+            "recoverable": False
+        }))
+
     # ── PIPELINE STATE & TELEMETRY TRACKING ──
     turn_count = 0
     current_generation_id = f"gen_0_{uuid.uuid4().hex[:6]}"
