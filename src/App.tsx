@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { 
   Mic, 
@@ -23,8 +23,7 @@ import {
   Layers,
   Clock,
   Radio,
-  Sparkles,
-  Info
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -129,10 +128,16 @@ interface PipelineError {
 // ── Voice Session Component (inside LiveKitRoom) ──
 const VoiceSession = ({ 
   agentName,
-  onOpenArchitecture
+  onOpenArchitecture,
+  errors,
+  setErrors,
+  dismissError
 }: { 
   agentName: string;
   onOpenArchitecture: () => void;
+  errors: PipelineError[];
+  setErrors: React.Dispatch<React.SetStateAction<PipelineError[]>>;
+  dismissError: (id: string) => void;
 }) => {
   const room = useRoomContext();
   const { state, audioTrack } = useVoiceAssistant();
@@ -153,9 +158,10 @@ const VoiceSession = ({
     tts: 'ready',
     webrtc: 'connected'
   });
-  const [errors, setErrors] = useState<PipelineError[]>([]);
+  
   const [slowWarning, setSlowWarning] = useState<boolean>(false);
   const [micMuted, setMicMuted] = useState<boolean>(false);
+  const [interimAgentText, setInterimAgentText] = useState<string>('');
 
   // Slow response / backpressure timer guard
   useEffect(() => {
@@ -193,9 +199,9 @@ const VoiceSession = ({
         const text = new TextDecoder().decode(payload);
         const event = JSON.parse(text);
 
-        // Sequence number check for monotonic ordering
-        if (event.seq && event.seq < lastSeqRef.current) {
-          log('DATA', `⚠️ Dropping out-of-order packet (seq ${event.seq} < ${lastSeqRef.current})`);
+        // Sequence number check for monotonic ordering (reject duplicates and out-of-order)
+        if (event.seq && event.seq <= lastSeqRef.current) {
+          log('DATA', `⚠️ Dropping duplicate/out-of-order packet (seq ${event.seq} <= ${lastSeqRef.current})`);
           return;
         }
         if (event.seq) lastSeqRef.current = event.seq;
@@ -215,7 +221,14 @@ const VoiceSession = ({
         else if (type === 'interim_transcript') {
           if (data.speaker === 'user') {
             setInterimUserText(data.text);
+          } else if (data.speaker === 'agent') {
+            setInterimAgentText(data.text);
           }
+        }
+
+        // 2b. Progressive LLM streaming delta (agent text arriving token-by-token)
+        else if (type === 'agent_delta') {
+          setInterimAgentText((prev) => prev + (data.text || ''));
         }
 
         // 3. Final Transcript (User or Agent)
@@ -230,6 +243,9 @@ const VoiceSession = ({
 
           if (data.speaker === 'user') {
             setInterimUserText('');
+          }
+          if (data.speaker === 'agent') {
+            setInterimAgentText('');
           }
 
           let rawText = data.text;
@@ -308,6 +324,11 @@ const VoiceSession = ({
             recoverable: data.recoverable ?? true,
           };
           setErrors((prev) => [...prev.slice(-2), newErr]);
+          
+          // Dynamically update the pipeline health pills so they turn red
+          if (data.source && ['stt', 'llm', 'tts', 'webrtc', 'mic'].includes(data.source)) {
+             setPipelineHealth((prev) => ({ ...prev, [data.source]: 'error' }));
+          }
         }
       } catch (err) {
         log('DATA', `Failed to parse data message: ${err}`);
@@ -340,10 +361,6 @@ const VoiceSession = ({
     return state;
   };
 
-  const dismissError = (id: string) => {
-    setErrors((prev) => prev.filter((e) => e.id !== id));
-  };
-
   const toggleMic = async () => {
     try {
       const newMuted = !micMuted;
@@ -352,6 +369,7 @@ const VoiceSession = ({
       log('MIC', newMuted ? '🔇 Microphone STOPPED (muted by user)' : '🎙️ Microphone STARTED (unmuted by user)');
     } catch (err) {
       log('MIC', `❌ Failed to toggle microphone: ${err}`);
+      setErrors((prev) => [...prev.slice(-2), { id: `err_${Date.now()}`, source: 'mic', message: `Microphone permission denied or in use: ${err}`, timestamp: new Date().toLocaleTimeString(), recoverable: true }]);
     }
   };
 
@@ -406,21 +424,21 @@ const VoiceSession = ({
           </div>
         </div>
 
-        {/* Pipeline Health Status Pills */}
+        {/* Pipeline Health Status Pills (driven by pipelineHealth state) */}
         <div className="pipeline-health-row">
-          <div className="health-pill health-ok" title="User Mic Stream">
-            <Mic size={11} /> Mic: OK
+          <div className={`health-pill ${micMuted ? 'health-warn' : 'health-ok'}`} title="User Mic Stream">
+            <Mic size={11} /> Mic: {micMuted ? 'Muted' : 'OK'}
           </div>
-          <div className="health-pill health-ok" title="WebRTC Audio Track">
+          <div className={`health-pill ${pipelineHealth.webrtc === 'connected' ? 'health-ok' : 'health-warn'}`} title="WebRTC Audio Track">
             <Radio size={11} /> WebRTC
           </div>
-          <div className="health-pill health-ok" title="Deepgram Nova-3">
+          <div className={`health-pill ${pipelineHealth.stt === 'ready' ? 'health-ok' : 'health-warn'}`} title="Deepgram Nova-3">
             <Zap size={11} /> STT: Nova-3
           </div>
-          <div className="health-pill health-ok" title="Groq Fast Inference">
+          <div className={`health-pill ${pipelineHealth.llm === 'ready' ? 'health-ok' : 'health-warn'}`} title="Groq Fast Inference">
             <Cpu size={11} /> LLM: Groq
           </div>
-          <div className="health-pill health-ok" title="Deepgram Aura-2 Streaming">
+          <div className={`health-pill ${pipelineHealth.tts === 'ready' ? 'health-ok' : 'health-warn'}`} title="Deepgram Aura-2 Streaming">
             <Volume2 size={11} /> TTS: Aura-2
           </div>
         </div>
@@ -569,6 +587,26 @@ const VoiceSession = ({
                     <span className="bubble-sender">You <span className="live-tag">Speaking...</span></span>
                   </div>
                   <p className="interim-text">{interimUserText}</p>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Progressive Agent Response (LLM streaming text in real-time) */}
+            {interimAgentText && (
+              <motion.div
+                key="interim_agent_bubble"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="chat-bubble-wrap agent-side"
+              >
+                <div className="chat-icon icon-agent pulse-anim">
+                  <Bot size={14} />
+                </div>
+                <div className="chat-bubble agent-bubble bubble-interim">
+                  <div className="bubble-header-row">
+                    <span className="bubble-sender">{agentName} <span className="live-tag">Generating...</span></span>
+                  </div>
+                  <p className="interim-text">{interimAgentText}</p>
                 </div>
               </motion.div>
             )}
@@ -776,6 +814,14 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showArch, setShowArch] = useState(false);
+  
+  // App-level error state so it survives component unmounts and can handle root LiveKitRoom errors
+  const [errors, setErrors] = useState<PipelineError[]>([]);
+  const [isDisconnected, setIsDisconnected] = useState(false);
+
+  const dismissError = (id: string) => {
+    setErrors((prev) => prev.filter((e) => e.id !== id));
+  };
   const [activeAgent, setActiveAgent] = useState<Agent | null>(null);
   const [connectionDetails, setConnectionDetails] = useState<{ token: string; url: string } | null>(null);
 
@@ -993,14 +1039,39 @@ const App = () => {
                 audio={true}
                 video={false}
                 onDisconnected={() => {
-                  handleDisconnect();
+                  log('ROOM', '⚠️ WebRTC disconnected.');
+                  setIsDisconnected(true);
+                  setErrors((prev) => [...prev, { id: `err_${Date.now()}`, source: 'webrtc', message: 'WebRTC Connection Lost', timestamp: new Date().toLocaleTimeString(), recoverable: true }]);
+                }}
+                onError={(err) => {
+                  log('ROOM', `❌ LiveKit Room error: ${err?.message || err}`);
+                  setErrors((prev) => [...prev, { id: `err_${Date.now()}`, source: 'webrtc', message: `LiveKit Error: ${err?.message || err}`, timestamp: new Date().toLocaleTimeString(), recoverable: true }]);
+                }}
+                onMediaDeviceFailure={(failure) => {
+                  log('ROOM', `❌ Media device failure: ${failure}`);
+                  setErrors((prev) => [...prev, { id: `err_${Date.now()}`, source: 'mic', message: `Microphone device failure: ${failure?.message || failure}`, timestamp: new Date().toLocaleTimeString(), recoverable: true }]);
                 }}
                 style={{ height: '100%', display: 'flex', flexDirection: 'column', flex: 1 }}
               >
-                <VoiceSession 
-                  agentName={activeAgent.name} 
-                  onOpenArchitecture={() => setShowArch(true)}
-                />
+                {isDisconnected ? (
+                  <div className="disconnected-overlay" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'white', background: 'rgba(0,0,0,0.8)' }}>
+                    <AlertTriangle size={48} className="text-danger mb-4" />
+                    <h2>Connection Lost</h2>
+                    <p>The WebRTC connection to the server was unexpectedly dropped.</p>
+                    <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
+                      <button onClick={() => { setIsDisconnected(false); setErrors([]); }} className="btn-primary"><RefreshCw size={16} /> Try Reconnect</button>
+                      <button onClick={handleDisconnect} className="btn-secondary">Close Session</button>
+                    </div>
+                  </div>
+                ) : (
+                  <VoiceSession 
+                    agentName={activeAgent.name} 
+                    onOpenArchitecture={() => setShowArch(true)}
+                    errors={errors}
+                    setErrors={setErrors}
+                    dismissError={dismissError}
+                  />
+                )}
               </LiveKitRoom>
             </motion.div>
           </motion.div>

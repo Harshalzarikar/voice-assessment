@@ -972,6 +972,12 @@ input, textarea, button { font-family: inherit; }
   color: #06d6a0;
 }
 
+.health-warn {
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.3);
+  color: #ff6b6b;
+}
+
 .left-actions-row {
   width: 100%;
   display: flex;

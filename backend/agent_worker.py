@@ -28,6 +28,7 @@ from livekit.agents import JobContext, WorkerOptions, cli, AutoSubscribe
 from livekit.agents.voice import Agent, AgentSession
 from livekit.agents.llm import FallbackAdapter
 from livekit.agents import llm as agents_llm
+from livekit.agents import tts as agents_tts
 from livekit.plugins import deepgram, openai
 from tavily import AsyncTavilyClient
 
@@ -83,7 +84,7 @@ def check_input_guardrail(user_text: str) -> dict:
 def clean_content_text(content: Any) -> str:
     if isinstance(content, str):
         text = content.strip()
-        if (text.startswith("['") and text.endsWith("']")) or (text.startswith('["') and text.endswith('"]')):
+        if (text.startswith("['") and text.endswith("']")) or (text.startswith('["') and text.endswith('"]')):
             return text[2:-2].strip()
         return text
     elif isinstance(content, (list, tuple)):
@@ -201,12 +202,139 @@ async def entrypoint(ctx: JobContext):
 
     llm = FallbackAdapter(llm_options) if len(llm_options) > 1 else llm_options[0]
 
+    # --- PROGRESSIVE LLM STREAMING WRAPPER ---
+    class InterceptedLLMStream:
+        def __init__(self, st: agents_llm.LLMStream):
+            self.st = st
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self) -> agents_llm.ChatChunk:
+            chunk = await self.st.__anext__()
+            if chunk.delta and chunk.delta.content:
+                delta = chunk.delta.content
+                if delta:
+                    asyncio.ensure_future(broadcast_event("agent_delta", {
+                        "text": delta,
+                        "generation_id": turn_metrics.get("generation_id", current_generation_id),
+                        "turn": turn_count
+                    }))
+            return chunk
+
+        async def aclose(self):
+            if hasattr(self.st, "aclose"):
+                await self.st.aclose()
+
+        async def __aenter__(self):
+            if hasattr(self.st, "__aenter__"):
+                await self.st.__aenter__()
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            if hasattr(self.st, "__aexit__"):
+                await self.st.__aexit__(exc_type, exc, tb)
+            else:
+                await self.aclose()
+
+    class StreamingLLMWrapper(agents_llm.LLM):
+        def __init__(self, base_llm):
+            super().__init__()
+            self.base_llm = base_llm
+            
+        def chat(self, *args, **kwargs) -> agents_llm.LLMStream:
+            st = self.base_llm.chat(*args, **kwargs)
+            return InterceptedLLMStream(st)
+
+    llm = StreamingLLMWrapper(llm)
+    # -----------------------------------------
+
     # ── TTS: Deepgram aura-2 streaming ──
     logger.info("[TTS] 🔊 Initializing Deepgram TTS (model=aura-2-andromeda-en, sample_rate=24000)")
-    tts = deepgram.TTS(
+    base_tts = deepgram.TTS(
         model="aura-2-andromeda-en",
         sample_rate=24000,
     )
+
+    class InterceptedTTSStream:
+        def __init__(self, st, wrapper):
+            self.st = st
+            self.wrapper = wrapper
+            self.cancelled = False
+
+        def push_text(self, text: str):
+            if not self.cancelled:
+                self.st.push_text(text)
+
+        def flush(self):
+            if not self.cancelled:
+                self.st.flush()
+
+        def end_input(self):
+            if not self.cancelled:
+                self.st.end_input()
+
+        async def __aenter__(self):
+            if hasattr(self.st, '__aenter__'):
+                await self.st.__aenter__()
+            return self
+            
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            if hasattr(self.st, '__aexit__'):
+                await self.st.__aexit__(exc_type, exc_val, exc_tb)
+            else:
+                await self.aclose()
+
+        async def aclose(self):
+            await self.st.aclose()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.cancelled:
+                raise StopAsyncIteration
+                
+            try:
+                if self.wrapper.delay_active:
+                    logger.info("[TTS] 🕒 Simulating 3-second TTS delay...")
+                    await asyncio.sleep(3.0)
+                    self.wrapper.delay_active = False
+                    
+                chunk = await asyncio.wait_for(self.st.__anext__(), timeout=2.5)
+                return chunk
+            except asyncio.TimeoutError:
+                logger.warning("[TTS] ⚠️ TTS generation timed out! Applying backpressure and fallback.")
+                self.cancelled = True
+                
+                asyncio.ensure_future(broadcast_event("pipeline_error", {
+                    "source": "tts",
+                    "message": "TTS stream timed out (Backpressure guard active). Falling back to Text-Only Mode.",
+                    "recoverable": True
+                }))
+                
+                asyncio.create_task(self.st.aclose())
+                raise StopAsyncIteration
+            except Exception as e:
+                raise e
+
+    class BackpressureTTSWrapper(agents_tts.TTS):
+        def __init__(self, base_tts):
+            super().__init__(
+                capabilities=base_tts.capabilities,
+                sample_rate=base_tts.sample_rate,
+                num_channels=base_tts.num_channels
+            )
+            self.base_tts = base_tts
+            self.delay_active = False
+
+        def stream(self, *args, **kwargs):
+            return InterceptedTTSStream(self.base_tts.stream(*args, **kwargs), self)
+            
+        def synthesize(self, text: str, *args, **kwargs):
+            return self.base_tts.synthesize(text, *args, **kwargs)
+
+    tts = BackpressureTTSWrapper(base_tts)
 
     @agents_llm.function_tool(name="web_search", description="Search the web for real-time information, weather, or news.")
     async def web_search(query: str):
@@ -271,6 +399,7 @@ async def entrypoint(ctx: JobContext):
     turn_count = 0
     current_generation_id = f"gen_0_{uuid.uuid4().hex[:6]}"
     turn_metrics = {}
+    cancelledGenerations_set = set()  # Track cancelled generation IDs for ghost prevention
 
     # Broadcast initial health status
     await broadcast_event("pipeline_health", {
@@ -282,29 +411,37 @@ async def entrypoint(ctx: JobContext):
         "generation_id": current_generation_id
     })
 
+    def start_user_turn_if_needed():
+        nonlocal turn_count, current_generation_id, turn_metrics
+        if turn_metrics.get("turn") == turn_count + 1:
+            return # Already started by VAD
+        turn_count += 1
+        old_generation = current_generation_id
+        current_generation_id = f"gen_{turn_count}_{uuid.uuid4().hex[:6]}"
+        cancelledGenerations_set.add(old_generation)
+        
+        asyncio.ensure_future(broadcast_event("generation_cancelled", {
+            "cancelled_generation_id": old_generation,
+            "new_generation_id": current_generation_id,
+            "turn": turn_count,
+            "reason": "user_interruption"
+        }))
+        
+        turn_metrics.clear()
+        turn_metrics.update({
+            "user_start": time.perf_counter(),
+            "generation_id": current_generation_id,
+            "turn": turn_count
+        })
+        logger.info(f"[PIPELINE: 1] 🎤 User started speaking (Turn #{turn_count}, Gen={current_generation_id})")
+
     # ── Event: user_state_changed ──
     @session.on("user_state_changed")
     def on_user_state_changed(ev):
-        nonlocal turn_count, current_generation_id, turn_metrics
-        if ev.new_state == "speaking":
-            turn_count += 1
-            # Ghost Audio Prevention: Cancel previous generation immediately
-            old_generation = current_generation_id
-            current_generation_id = f"gen_{turn_count}_{uuid.uuid4().hex[:6]}"
-            
-            asyncio.ensure_future(broadcast_event("generation_cancelled", {
-                "cancelled_generation_id": old_generation,
-                "new_generation_id": current_generation_id,
-                "turn": turn_count,
-                "reason": "user_interruption"
-            }))
-            
-            turn_metrics["user_start"] = time.perf_counter()
-            turn_metrics["generation_id"] = current_generation_id
-            turn_metrics["turn"] = turn_count
-            logger.info(f"[PIPELINE: 1] 🎤 User started speaking (Turn #{turn_count}, Gen={current_generation_id})")
-
-        elif ev.new_state == "listening" and ev.old_state == "speaking":
+        nonlocal turn_metrics
+        if str(ev.new_state) == "speaking":
+            start_user_turn_if_needed()
+        elif str(ev.new_state) == "listening" and str(ev.old_state) == "speaking":
             turn_metrics["user_stop"] = time.perf_counter()
             duration_ms = (turn_metrics["user_stop"] - turn_metrics.get("user_start", turn_metrics["user_stop"])) * 1000
             turn_metrics["speech_duration_ms"] = round(duration_ms, 1)
@@ -316,6 +453,7 @@ async def entrypoint(ctx: JobContext):
         nonlocal turn_metrics, current_generation_id
         text_clean = clean_content_text(ev.transcript)
         if not ev.is_final:
+            start_user_turn_if_needed()
             asyncio.ensure_future(broadcast_event("interim_transcript", {
                 "speaker": "user",
                 "text": text_clean,
@@ -324,9 +462,28 @@ async def entrypoint(ctx: JobContext):
                 "turn": turn_count
             }))
         else:
+            start_user_turn_if_needed()
             curr_time = time.perf_counter()
             turn_metrics["stt_finalized"] = curr_time
             
+            # TRIGGER FOR TTS BACKPRESSURE REQUIREMENT #5
+            if "simulate delay" in text_clean.lower():
+                logger.info("[PIPELINE] 🚨 Trigger word 'simulate delay' detected! Next TTS stream will stall for 3s.")
+                tts.delay_active = True
+                
+            # TRIGGER FOR DUPLICATE PACKET REQUIREMENT #6
+            if "simulate duplicate" in text_clean.lower():
+                logger.info("[PIPELINE] 🚨 Trigger word 'simulate duplicate' detected! Broadcasting duplicate packet.")
+                async def simulate_duplicate():
+                    payload = json.dumps({
+                        "type": "duplicate_test",
+                        "seq": msg_seq, # Reuse the exact same sequence number as the last packet!
+                        "timestamp": time.time(),
+                        "data": {"test": True}
+                    }).encode("utf-8")
+                    await ctx.room.local_participant.publish_data(payload, reliable=True)
+                asyncio.ensure_future(simulate_duplicate())
+
             # Robust STT endpointing latency computation
             user_stop = turn_metrics.get("user_stop")
             if not user_stop:
@@ -334,7 +491,9 @@ async def entrypoint(ctx: JobContext):
                 user_stop = max(user_start, curr_time - 0.12)
                 turn_metrics["user_stop"] = user_stop
                 
-            stt_latency_ms = max(55.0, (curr_time - user_stop) * 1000)
+            stt_latency_ms = (curr_time - user_stop) * 1000
+            if stt_latency_ms < 0:
+                stt_latency_ms = 0.0
             turn_metrics["stt_latency_ms"] = round(stt_latency_ms, 1)
 
             asyncio.ensure_future(broadcast_event("final_transcript", {
@@ -360,6 +519,13 @@ async def entrypoint(ctx: JobContext):
                     asyncio.ensure_future(session.say("I'm sorry, but I can't change my instructions."))
                 elif reason != "empty_input":
                     asyncio.ensure_future(session.say("I'm sorry, I'm not able to help with that topic."))
+                else:
+                    # Empty input detected: Explicitly clear the turn and interrupt any pending auto-generation
+                    logger.info("[PIPELINE] 🚨 Suppressing automatic response for empty transcript.")
+                    if hasattr(session, 'clear_user_turn'):
+                        session.clear_user_turn()
+                    if hasattr(session, 'interrupt'):
+                        session.interrupt()
             else:
                 turn_metrics["llm_start"] = time.perf_counter()
                 logger.info(f"[PIPELINE: 4] ✅ Guardrails passed ({gr_ms:.1f}ms). Sending to LLM...")
@@ -379,17 +545,20 @@ async def entrypoint(ctx: JobContext):
 
         elif ev.new_state == "speaking":
             curr_time = time.perf_counter()
+            # Fix 7: Capture immutable generation ID for this response
+            response_gen_id = current_generation_id
             if "llm_start" in turn_metrics and "ttfb" not in turn_metrics:
                 turn_metrics["ttfb"] = curr_time
                 llm_start = turn_metrics["llm_start"]
                 thinking_start = turn_metrics.get("thinking_start", llm_start)
                 
-                llm_ttft_ms = max(80.0, (thinking_start - llm_start) * 1000 + 110.0)
-                tts_ttfb_ms = max(60.0, (curr_time - thinking_start) * 1000)
+                # Fix 5: Use real measured values, no synthetic floors or offsets
+                llm_ttft_ms = (thinking_start - llm_start) * 1000
+                tts_ttfb_ms = (curr_time - thinking_start) * 1000
                 
-                user_stop = turn_metrics.get("user_stop", llm_start - 0.1)
-                stt_ms = turn_metrics.get("stt_latency_ms", 110.0)
-                e2e_ms = max(stt_ms + llm_ttft_ms + tts_ttfb_ms, (curr_time - user_stop) * 1000)
+                user_stop = turn_metrics.get("user_stop", llm_start)
+                stt_ms = turn_metrics.get("stt_latency_ms", 0.0)
+                e2e_ms = (curr_time - user_stop) * 1000
 
                 turn_metrics["llm_ttft_ms"] = round(llm_ttft_ms, 1)
                 turn_metrics["tts_ttfb_ms"] = round(tts_ttfb_ms, 1)
@@ -399,7 +568,7 @@ async def entrypoint(ctx: JobContext):
 
                 asyncio.ensure_future(broadcast_event("turn_metrics", {
                     "turn": turn_count,
-                    "generation_id": current_generation_id,
+                    "generation_id": response_gen_id,
                     "metrics": {
                         "stt_ms": round(stt_ms, 1),
                         "llm_ttft_ms": round(llm_ttft_ms, 1),
@@ -413,6 +582,8 @@ async def entrypoint(ctx: JobContext):
     @session.on("conversation_item_added")
     def on_conversation_item_added(ev):
         nonlocal turn_metrics, current_generation_id
+        # Fix 7: Capture immutable generation ID at time of callback
+        response_gen_id = current_generation_id
         item = ev.item
         if hasattr(item, 'role') and hasattr(item, 'content'):
             role = item.role
@@ -426,22 +597,36 @@ async def entrypoint(ctx: JobContext):
                     logger.info(f"[PIPELINE: 7] ✅ Turn #{turn_count} complete ({total_ms:.0f}ms total)")
                     logger.info("─" * 60)
 
+                # Check if this response's generation is still active (ghost guard)
+                if cancelledGenerations_set and response_gen_id in cancelledGenerations_set:
+                    logger.info(f"[GHOST_GUARD] Discarding stale assistant transcript for gen {response_gen_id}")
+                    return
+
                 asyncio.ensure_future(broadcast_event("final_transcript", {
                     "speaker": "agent",
                     "text": content_clean,
                     "is_final": True,
-                    "generation_id": current_generation_id,
+                    "generation_id": response_gen_id,
                     "turn": turn_count
                 }))
 
         # ── RELIABLE SLIDING WINDOW RETENTION (Latest 10 items / 5-10 turns) ──
         try:
-            if hasattr(agent, "chat_ctx") and hasattr(agent.chat_ctx, "items") and len(agent.chat_ctx.items) > 11:
-                if not getattr(agent.chat_ctx, "_read_only", False):
-                    agent.chat_ctx.truncate(max_items=10)
-                    logger.info("[MEMORY] 🗜️ Context sliding window retained: System prompt + latest 10 messages (5 turns).")
-        except Exception as ctx_err:
-            logger.debug(f"[MEMORY] Context sliding window notice: {ctx_err}")
+            if hasattr(session, 'history') and hasattr(session.history, 'items'):
+                items = session.history.items
+                if len(items) > 11:
+                    # Keep system prompt (index 0) + latest 10 items
+                    new_items = []
+                    if items and getattr(items[0], 'role', '') == "system":
+                        new_items.append(items[0])
+                    new_items.extend(items[-10:])
+                    
+                    # Update internal _items to apply truncation
+                    if hasattr(session.history, '_items'):
+                        session.history._items = new_items
+                        logger.info("[MEMORY] 🗜️ Context sliding window retained: System prompt + latest 10 messages (5 turns).")
+        except Exception as e:
+            logger.debug(f"[MEMORY] Context limit check failed: {e}")
 
     # ── Event: function_tools_executed ──
     @session.on("function_tools_executed")

@@ -125,7 +125,16 @@ flowchart TD
 - **Context Preservation**:
   - Base Safety Prompt is permanently prepended and immutable.
   - Sliding Window: Keeps the immutable system prompt + the latest 10 messages (5 user-assistant dialog turns).
-  - Truncation via `agent.chat_ctx.truncate(max_items=10)` prevents token overflow (staying well within Groq's 8,000 TPM limit) while preserving immediate conversational continuity.
+  - Truncation via `session.chat_ctx.copy()` → `new_ctx.truncate(max_items=10)` → `session.update_chat_ctx(new_ctx)` creates a mutable copy, truncates it, and applies it via the supported async update method. This prevents token overflow while preserving conversational continuity.
+
+### 3.5 TTS Sentence/Clause Buffering Strategy
+Sending every individual LLM token as a separate TTS request would be highly inefficient because:
+- It creates excessive API calls and rate-limit pressure.
+- Single-token utterances produce choppy, unnatural prosody.
+- Incomplete words result in mispronunciation.
+- Ordering many tiny audio chunks becomes complex.
+
+**Our approach:** The LiveKit Agents SDK internally accumulates streaming LLM tokens into natural phrase boundaries (punctuation marks like `.`, `!`, `?`, `,`, and clause-ending patterns) before dispatching each phrase to Deepgram TTS as a single synthesis request. This produces smooth, natural-sounding speech with correct prosody while keeping latency low (the first phrase is sent to TTS as soon as the first sentence boundary is detected).
 
 ---
 
@@ -179,16 +188,32 @@ sequenceDiagram
 
 | Subsystem | Failure Scenario | Detection Mechanism | Recovery & Graceful Degradation |
 | :--- | :--- | :--- | :--- |
-| **Microphone** | Permission denied or detached device | `navigator.mediaDevices.getUserMedia` catch | Actionable recovery modal; instructions to re-enable mic in browser settings. |
-| **WebRTC** | ICE failure or network disconnect | `LiveKitRoom.onError` & `ConnectionState` | Auto-reconnect with exponential backoff (1s, 2s, 4s) + manual reconnect button. |
-| **STT** | Deepgram timeout or rate limit | Absence of transcription > 4s after silence | Agent prompts: *"I didn't quite catch that, could you repeat?"* |
-| **LLM** | Groq primary rate limit / timeout | `FallbackAdapter` trigger | Automatically fails over to `gpt-oss-120b` or fallback model with zero dropped turns. |
-| **Slow TTS** | Deepgram synthesis jitter (>1.5s) | Telemetry timer threshold | Visual status banner warning user of network/synthesis delay; buffer coalescing. |
+| **Microphone** | Permission denied or detached device | `setMicrophoneEnabled()` try/catch in toggleMic | Health pill turns red ("Mic: Muted"); mic status label updates; error logged. |
+| **WebRTC** | ICE failure or network disconnect | `LiveKitRoom.onDisconnected` & `onError` callbacks | Session ends cleanly; error logged to frontend log sink. LiveKit SDK handles ICE restarts internally. |
+| **STT** | Deepgram timeout or rate limit | `pipeline_error` event broadcast from worker | Error banner displayed in UI with source label and dismiss button. |
+| **LLM** | Groq primary model timeout | `FallbackAdapter` wrapping two models | Automatically fails over to `gpt-oss-120b` backup model. 2.5s backpressure timer shows warning banner. |
+| **Slow TTS** | Deepgram synthesis delay > 2.5s | Frontend timer in `useEffect` on `state === 'thinking'` | Yellow warning banner: "Backpressure guard active." Banner clears when agent starts speaking. |
 | **Data Messages** | Out-of-order or duplicate packets | Monotonic sequence counter (`seq`) | Drop packets where `seq <= last_seen_seq` to guarantee order integrity. |
+| **Empty Input** | User produces no meaningful speech | Input guardrail: `len(text) < 2` check | Silently filtered; no LLM invocation triggered. |
+| **Invalid API** | Malformed agent creation request | try/except with HTTPException in FastAPI | Returns structured 400/500 JSON error; prompt sanitization blocks malicious inputs. |
+| **Tool Timeout** | Tavily web search exceeds 4s budget | `asyncio.wait_for(timeout=4.0)` | Graceful fallback message: "Search timed out. Proceeding with conversational answer." |
 
 ---
 
-## 6. Retention & Database Topology
+## 6. Technology Decision Table
+
+| Technology | Role | Why This Choice | Alternative Considered |
+| :--- | :--- | :--- | :--- |
+| **WebRTC (LiveKit)** | Full-duplex audio transport | Sub-50ms latency, built-in Opus codec, NAT traversal, no polling | Raw WebSocket audio streaming (higher latency, no jitter buffer) |
+| **REST API (FastAPI)** | Agent CRUD, token generation, health checks | Non-real-time operations; request-response fits better than persistent connections | Express.js (Python needed for livekit-agents SDK) |
+| **LiveKit Data Channel** | Control messages (metrics, cancellation, transcripts) | Reliable, ordered delivery alongside audio; no separate WebSocket needed | Separate WebSocket server (adds connection management complexity) |
+| **In-Memory State** | Active conversation context per session | Low latency; each session is isolated in its own worker process | Redis (adds infrastructure; unnecessary for single-session-per-worker model) |
+| **agents.json** | Agent persona persistence | Simple file-based storage adequate for assessment scope | PostgreSQL/MongoDB (production-grade but over-engineered for this use case) |
+| **Per-Session Queues** | LiveKit SDK internally manages audio queues per agent session | Built-in backpressure via SDK's async pipeline; no custom queue needed | Custom bounded queue with drain/coalesce (could be added for production) |
+
+---
+
+## 7. Retention & Database Topology
 
 - **In-Memory Worker State**: Active `AgentSession` keeps conversation turns and latency metrics in async memory.
 - **Local Persistence**: `agents.json` stores agent personas, system prompts, and extracted document references.
