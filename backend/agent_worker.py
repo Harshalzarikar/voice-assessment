@@ -165,14 +165,13 @@ async def entrypoint(ctx: JobContext):
             logger.debug(f"[DATA] Failed to broadcast event {event_type}: {err}")
 
     # ── STT: Deepgram nova-3 ──
-    logger.info("[STT] 🎙️ Initializing Deepgram STT (model=nova-3, lang=en-US, endpointing=25ms)")
+    logger.info("[STT] 🎙️ Initializing Deepgram STT (model=nova-3, lang=en-US)")
     stt = deepgram.STT(
         model="nova-3",
         language="en-US",
         interim_results=True,
         smart_format=False,
         no_delay=True,
-        endpointing_ms=25,
         filler_words=True,
     )
 
