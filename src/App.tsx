@@ -172,7 +172,7 @@ const VoiceSession = ({
   
   const [slowWarning, setSlowWarning] = useState<boolean>(false);
   const [micMuted, setMicMuted] = useState<boolean>(false);
-  const [interimAgentText, setInterimAgentText] = useState<string>('');
+  const [interimAgentText, setInterimAgentText] = useState<Record<string, string>>({});
 
   // Slow response / backpressure timer guard
   useEffect(() => {
@@ -242,7 +242,12 @@ const VoiceSession = ({
           setCancelledGenerations(new Set(cancelledGenerationsRef.current));
           setActiveGenerationId(new_generation_id);
           setInterimUserText('');
-          setInterimAgentText(''); // Point 4: Immediately clear agent progressive text
+          // Point 4: Clear the old agent interim buffer on cancellation
+          setInterimAgentText((prev) => {
+            const next = { ...prev };
+            delete next[cancelled_generation_id];
+            return next;
+          });
         }
 
         // 2. Interim STT Transcript
@@ -250,15 +255,18 @@ const VoiceSession = ({
           if (data.speaker === 'user') {
             setInterimUserText(data.text);
           } else if (data.speaker === 'agent') {
-            setInterimAgentText(data.text);
+            setInterimAgentText((prev) => ({ ...prev, [data.generation_id]: data.text }));
           }
         }
 
         // 2b. Progressive LLM streaming delta (agent text arriving token-by-token)
         else if (type === 'agent_delta') {
-          // Point 3: Safely reject deltas that leak across generations
-          if (data.generation_id === activeGenerationIdRef.current && !cancelledGenerationsRef.current.has(data.generation_id)) {
-            setInterimAgentText((prev) => prev + (data.text || ''));
+          // Point 3 & 5: Reject cancelled deltas and store progressive text by generation
+          if (!cancelledGenerationsRef.current.has(data.generation_id)) {
+            setInterimAgentText((prev) => ({
+              ...prev,
+              [data.generation_id]: (prev[data.generation_id] || '') + (data.text || '')
+            }));
           }
         }
 
@@ -276,7 +284,11 @@ const VoiceSession = ({
             setInterimUserText('');
           }
           if (data.speaker === 'agent') {
-            setInterimAgentText('');
+            setInterimAgentText((prev) => {
+              const next = { ...prev };
+              delete next[genId];
+              return next;
+            });
           }
 
           let rawText = data.text;
@@ -631,7 +643,7 @@ const VoiceSession = ({
             )}
 
             {/* Progressive Agent Response (LLM streaming text in real-time) */}
-            {interimAgentText && (
+            {interimAgentText[activeGenerationId] && (
               <motion.div
                 key="interim_agent_bubble"
                 initial={{ opacity: 0, y: 8 }}
@@ -645,7 +657,7 @@ const VoiceSession = ({
                   <div className="bubble-header-row">
                     <span className="bubble-sender">{agentName} <span className="live-tag">Generating...</span></span>
                   </div>
-                  <p className="interim-text">{interimAgentText}</p>
+                  <p className="interim-text">{interimAgentText[activeGenerationId]}</p>
                 </div>
               </motion.div>
             )}

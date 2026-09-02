@@ -246,12 +246,15 @@ async def entrypoint(ctx: JobContext):
         def __init__(self, base_llm):
             super().__init__()
             self.base_llm = base_llm
+            self.active_stream = None
             
         def chat(self, *args, **kwargs) -> agents_llm.LLMStream:
             st = self.base_llm.chat(*args, **kwargs)
-            return InterceptedLLMStream(st)
+            self.active_stream = InterceptedLLMStream(st)
+            return self.active_stream
 
-    llm = StreamingLLMWrapper(llm)
+    llm_wrapper = StreamingLLMWrapper(llm)
+    llm = llm_wrapper
     # -----------------------------------------
 
     # ── TTS: Deepgram aura-2 streaming ──
@@ -428,6 +431,12 @@ async def entrypoint(ctx: JobContext):
         old_generation = current_generation_id
         current_generation_id = f"gen_{turn_count}_{uuid.uuid4().hex[:6]}"
         cancelledGenerations_set.add(old_generation)
+        
+        # Explicitly cancel the old LLM stream
+        if hasattr(llm_wrapper, 'active_stream') and llm_wrapper.active_stream is not None:
+            logger.info(f"[PIPELINE] 🛑 Explicitly closing LLM stream for cancelled generation: {old_generation}")
+            asyncio.ensure_future(llm_wrapper.active_stream.aclose())
+            llm_wrapper.active_stream = None
         
         asyncio.ensure_future(broadcast_event("generation_cancelled", {
             "cancelled_generation_id": old_generation,
