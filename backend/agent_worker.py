@@ -652,7 +652,6 @@ async def entrypoint(ctx: JobContext):
                     if hasattr(session, 'interrupt'):
                         session.interrupt()
             else:
-                turn_metrics["llm_start"] = time.perf_counter()
                 logger.info(f"[PIPELINE: 4] ✅ Guardrails passed ({gr_ms:.1f}ms). Sending to LLM...")
 
     # ── Event: agent_state_changed ──
