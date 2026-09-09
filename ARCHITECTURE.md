@@ -60,7 +60,7 @@ flowchart TD
     subgraph AgentWorker ["Python Agent Worker (livekit-agents)"]
         SessionManager[AgentSession Coordinator]
         Guardrails[Input Safety Guardrails]
-        MemoryManager[Sliding Window Context (5-10 Turns)]
+        MemoryManager["Sliding Window Context (5-10 Turns)"]
         GenManager["Generation ID & Cancellation Engine"]
         TelemetryEngine["Latency Telemetry & Metrics Publisher"]
     end
