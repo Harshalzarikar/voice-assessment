@@ -33,12 +33,12 @@ If we needed to optimize this pipeline even further, we would implement:
 ```mermaid
 flowchart TD
     subgraph Client ["Frontend Client (React + LiveKit Web SDK)"]
-        UI[User Interface & Visualizer]
+        UI["User Interface & Visualizer"]
         Mic[User Microphone Capture]
         Speaker[Room Audio Renderer]
-        DataRecv[Data Channel Demux & Dedup]
-        GhostGuard[Ghost Audio & Generation Filter]
-        MetricsUI[Live Latency Breakdown & Health Pills]
+        DataRecv["Data Channel Demux & Dedup"]
+        GhostGuard["Ghost Audio & Generation Filter"]
+        MetricsUI["Live Latency Breakdown & Health Pills"]
     end
 
     subgraph LiveKitCloud ["LiveKit Cloud / Media Server"]
@@ -61,8 +61,8 @@ flowchart TD
         SessionManager[AgentSession Coordinator]
         Guardrails[Input Safety Guardrails]
         MemoryManager[Sliding Window Context (5-10 Turns)]
-        GenManager[Generation ID & Cancellation Engine]
-        TelemetryEngine[Latency Telemetry & Metrics Publisher]
+        GenManager["Generation ID & Cancellation Engine"]
+        TelemetryEngine["Latency Telemetry & Metrics Publisher"]
     end
 
     subgraph CloudAI ["AI Inference Providers"]
@@ -168,8 +168,8 @@ sequenceDiagram
     
     rect rgb(240, 220, 220)
         Note over Worker: Interruption Detected
-        Worker->>Worker: Invalidate gen_1 -> Create gen_2
-        Worker->>Browser: DataChannel: generation_cancelled(cancelled_id: gen_1, new_id: gen_2)
+        Worker->>Worker: Invalidate gen_1, Create gen_2
+        Worker->>Browser: DataChannel: generation_cancelled [cancelled_id: gen_1, new_id: gen_2]
         Worker->>TTS: Cancel active audio stream
     end
 
